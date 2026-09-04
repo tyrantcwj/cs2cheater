@@ -1,0 +1,30 @@
+# Build
+cs2ext/build/
+**/CMakeFiles/
+**/CMakeCache.txt
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Dist / local packages (uploaded as GitHub Releases)
+dist/
+
+# User config
+**/cs2esp.ini
+**/*.user
+
+# IDE
+.vs/
+.vscode/
+.cursor/
+*.suo
+*.sdf
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
