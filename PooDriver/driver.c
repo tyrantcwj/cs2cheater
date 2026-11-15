@@ -295,13 +295,15 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DevObj, PIRP Irp)
             (SIZE_T)req.read_size,
             &br);
 
-        if (NT_SUCCESS(status)) {
+        if (NT_SUCCESS(status) && br == (SIZE_T)req.read_size) {
             bytesRet = (ULONG)br;
         }
         else {
-            RtlZeroMemory(buf, req.read_size);
-            bytesRet = req.read_size;
-            status = STATUS_SUCCESS;
+            // Keep the failure visible to usermode so callers can fall back
+            // instead of treating zero-filled buffers as valid game data.
+            if (NT_SUCCESS(status) && br != (SIZE_T)req.read_size)
+                status = STATUS_PARTIAL_COPY;
+            bytesRet = (ULONG)br;
         }
         break;
     }
@@ -352,9 +354,11 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DevObj, PIRP Irp)
 NTSTATUS UnsupportedDispatch(PDEVICE_OBJECT device_obj, PIRP irp) {
     UNREFERENCED_PARAMETER(device_obj);
 
-    irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
+    const NTSTATUS status = STATUS_NOT_SUPPORTED;
+    irp->IoStatus.Status = status;
+    irp->IoStatus.Information = 0;
     IoCompleteRequest(irp, IO_NO_INCREMENT);
-    return irp->IoStatus.Status;
+    return status;
 }
 
 /* =================================================================

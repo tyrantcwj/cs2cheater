@@ -194,6 +194,11 @@ public:
         g_memory->read_raw(g_memory->get_client_base() + g_offsets.client.dwViewMatrix,
                           &state.view_matrix, 64);
 
+        // --- 1 RPM: entity list ptr (needed before handle resolution) ---
+        int highest_entity = -1;
+        state.entity_list = resolve_entity_system(&highest_entity);
+        if (!state.entity_list) return state;
+
         // --- 1 RPM: local pawn ptr ---
         state.local.pawn = g_memory->read<uintptr_t>(
             g_memory->get_client_base() + g_offsets.client.dwLocalPlayerPawn);
@@ -233,11 +238,6 @@ public:
         }
 
         state.local.camera = read_camera();
-
-        // --- 1 RPM: entity list ptr ---
-        int highest_entity = -1;
-        state.entity_list = resolve_entity_system(&highest_entity);
-        if (!state.entity_list) return state;
 
         // --- 1 RPM: first page ptr ---
         uintptr_t first_page = g_memory->read<uintptr_t>(

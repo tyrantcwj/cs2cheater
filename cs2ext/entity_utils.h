@@ -82,18 +82,29 @@ inline int utf8_next(const char*& p) {
     auto b0 = (unsigned char)*p;
     if (!b0) return 0;
     if (b0 < 0x80) { p++; return b0; }
+
+    // Truncated names may end mid-sequence; never read past the terminator.
     auto b1 = (unsigned char)p[1];
-    if ((b0 & 0xE0) == 0xC0 && b1) { p += 2; return ((b0 & 0x1F) << 6) | (b1 & 0x3F); }
+    if (!b1) { p++; return 0xFFFD; }
+    if ((b0 & 0xE0) == 0xC0) {
+        p += 2;
+        return ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+    }
+
     auto b2 = (unsigned char)p[2];
-    if ((b0 & 0xF0) == 0xE0 && b1 && b2) {
+    if (!b2) { p++; return 0xFFFD; }
+    if ((b0 & 0xF0) == 0xE0) {
         p += 3;
         return ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
     }
+
     auto b3 = (unsigned char)p[3];
-    if ((b0 & 0xF8) == 0xF0 && b1 && b2 && b3) {
+    if (!b3) { p++; return 0xFFFD; }
+    if ((b0 & 0xF8) == 0xF0) {
         p += 4;
         return ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
     }
+
     p++;
     return 0xFFFD;
 }
