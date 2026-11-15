@@ -1,9 +1,12 @@
 #pragma once
 #include <imgui.h>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <algorithm>
 #include "types.h"
 #include "settings.h"
+#include "overlay.h"
 
 class Radar {
 public:
@@ -117,6 +120,145 @@ public:
 
         if (g_settings.radar_circle)
             draw->PopClipRect();
+
+        draw_place_list(draw, players, count, local_team, rx, ry, size, sh);
+    }
+
+private:
+    void draw_place_list(ImDrawList* draw, const RadarPlayer* players, int count,
+                         int local_team, float rx, float ry, float size, int sh)
+    {
+        if (!g_settings.radar_place_list) return;
+
+        struct Item {
+            int meters;
+            int health;
+            bool enemy;
+            const char* place;
+            const char* name;
+        };
+        Item items[64];
+        int n = 0;
+        for (int i = 0; i < count && n < 64; i++) {
+            if (!players[i].valid || players[i].health <= 0) continue;
+            bool enemy = (players[i].team != local_team);
+            if (!enemy && !g_settings.draw_teammates) continue;
+            items[n++] = {
+                players[i].meters,
+                players[i].health,
+                enemy,
+                players[i].place[0] ? players[i].place : "未知",
+                players[i].name[0] ? players[i].name : "-"
+            };
+        }
+        if (n == 0) return;
+
+        std::sort(items, items + n, [](const Item& a, const Item& b) {
+            return a.meters < b.meters;
+        });
+
+        ImFont* font = g_overlay.menu_font ? g_overlay.menu_font : ImGui::GetFont();
+        float fs = std::clamp(g_settings.radar_list_font_size, 8.0f, 28.0f);
+        float pad_x = 8.0f;
+        float pad_y = 5.0f;
+        float row_h = fs + 5.0f;
+        float header_h = fs + 3.0f;
+        float col_gap = std::max(22.0f, fs * 1.4f);
+        float dist_col_w = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, "999m").x;
+        float hp_col_w = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, "100").x;
+        float list_w = size;
+        float min_list_w = pad_x * 2.0f + fs * 4.0f + fs * 3.0f + hp_col_w + col_gap + dist_col_w;
+        if (list_w < min_list_w)
+            list_w = min_list_w;
+        float list_h = pad_y * 2.0f + header_h + row_h * n;
+        float list_x = rx;
+        float list_y = ry + size + 6.0f;
+        if (list_y + list_h > (float)sh - 4.0f)
+            list_y = (float)sh - list_h - 4.0f;
+
+        draw->AddRectFilled({list_x, list_y}, {list_x + list_w, list_y + list_h},
+                            IM_COL32(8, 10, 14, 190), 4.0f);
+        draw->AddRect({list_x, list_y}, {list_x + list_w, list_y + list_h},
+                      IM_COL32(70, 78, 88, 160), 4.0f, 0, 1.0f);
+
+        auto outlined = [&](float x, float y, ImU32 col, const char* text) {
+            draw->AddText(font, fs, {x + 1, y + 1}, IM_COL32(0, 0, 0, 180), text);
+            draw->AddText(font, fs, {x, y}, col, text);
+        };
+
+        auto fit_text = [&](char* out, size_t outsz, const char* src, float max_w) {
+            if (!src || !src[0]) { out[0] = 0; return; }
+            if (font->CalcTextSizeA(fs, FLT_MAX, 0.0f, src).x <= max_w) {
+                std::strncpy(out, src, outsz - 1);
+                out[outsz - 1] = 0;
+                return;
+            }
+            float dots_w = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, "..").x;
+            size_t best = 0;
+            size_t len = std::strlen(src);
+            for (size_t i = 1; i <= len && i < outsz - 3; i++) {
+                char tmp[256];
+                if (i >= sizeof(tmp)) break;
+                std::memcpy(tmp, src, i);
+                tmp[i] = 0;
+                if (font->CalcTextSizeA(fs, FLT_MAX, 0.0f, tmp).x + dots_w > max_w)
+                    break;
+                best = i;
+            }
+            while (best > 0 && ((unsigned char)src[best] & 0xC0) == 0x80)
+                best--;
+            std::memcpy(out, src, best);
+            std::memcpy(out + best, "..", 3);
+        };
+
+        float hx = list_x + pad_x;
+        float hy = list_y + pad_y;
+        float name_col_w = std::max(fs * 4.0f, list_w - pad_x * 2.0f - fs * 3.0f - hp_col_w - col_gap - dist_col_w);
+        float place_x = list_x + pad_x + name_col_w;
+        float hp_right = list_x + list_w - pad_x - dist_col_w - col_gap;
+        ImU32 head_col = IM_COL32(180, 186, 196, 200);
+        outlined(hx, hy, head_col, "游戏ID");
+        outlined(place_x, hy, head_col, "位置");
+        {
+            const char* hp_h = "血量";
+            ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, hp_h);
+            outlined(hp_right - ts.x, hy, head_col, hp_h);
+        }
+        {
+            const char* dist_h = "距离";
+            ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, dist_h);
+            outlined(list_x + list_w - pad_x - ts.x, hy, head_col, dist_h);
+        }
+
+        float y = hy + header_h;
+        for (int i = 0; i < n; i++) {
+            ImU32 col = items[i].enemy
+                ? float4_to_col(g_settings.radar_enemy_color)
+                : float4_to_col(g_settings.radar_team_color);
+
+            char name_fit[96];
+            fit_text(name_fit, sizeof(name_fit), items[i].name, name_col_w - 8.0f);
+            outlined(hx, y, col, name_fit);
+
+            char place_fit[48];
+            float place_max_w = list_w - pad_x * 2.0f - name_col_w - dist_col_w - col_gap - hp_col_w;
+            if (place_max_w < 36.0f) place_max_w = 36.0f;
+            fit_text(place_fit, sizeof(place_fit), items[i].place, place_max_w);
+            outlined(place_x, y, col, place_fit);
+
+            char hp_txt[8];
+            snprintf(hp_txt, sizeof(hp_txt), "%d", items[i].health);
+            float hp_t = std::clamp(items[i].health / 100.0f, 0.0f, 1.0f);
+            ImU32 hp_col = IM_COL32((int)(255 * (1.0f - hp_t)), (int)(220 * hp_t), 48, 255);
+            ImVec2 hp_ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, hp_txt);
+            outlined(hp_right - hp_ts.x, y, hp_col, hp_txt);
+
+            char dist[16];
+            snprintf(dist, sizeof(dist), "%dm", items[i].meters);
+            ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, dist);
+            outlined(list_x + list_w - pad_x - ts.x, y, col, dist);
+            y += row_h;
+        }
     }
 };
 

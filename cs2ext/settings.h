@@ -5,9 +5,10 @@
 static constexpr float REFERENCE_WIDTH  = 1920.0f;
 static constexpr float REFERENCE_HEIGHT = 1080.0f;
 
-static constexpr float BASE_RADAR_SIZE            = 330.0f;
-static constexpr float BASE_RADAR_POS             = 35.0f;
+static constexpr float BASE_RADAR_SIZE            = 500.0f;
+static constexpr float BASE_RADAR_POS             = 50.0f;
 static constexpr float BASE_RADAR_NAMES_FONT_SIZE = 11.0f;
+static constexpr float BASE_RADAR_LIST_FONT_SIZE  = 14.0f;
 static constexpr float BASE_MENU_FONT_SIZE        = 20.0f;
 static constexpr float BASE_SPEC_Y                = 30.0f;
 
@@ -41,7 +42,8 @@ struct MenuSettings {
     bool draw_box = true;
     bool draw_healthbar = false;
     bool draw_health_text = false;
-    bool draw_name = false;
+    bool draw_name = true;
+    bool draw_place = true;
     bool draw_weapon = false;
     bool draw_teammates = false;
     bool draw_head = true;
@@ -80,15 +82,17 @@ struct MenuSettings {
 
     // Radar (defaults are 1080p base; adapt_to_resolution() scales for 4K etc.)
     float radar_size = BASE_RADAR_SIZE;
-    float radar_zoom = 0.35f;
+    float radar_zoom = 0.60f;
     float radar_x = BASE_RADAR_POS;
     float radar_y = BASE_RADAR_POS;
     bool radar_rotate = true;
     bool radar_circle = true;
     bool radar_rings = false;
     bool radar_names = false;
+    bool radar_place_list = true;
     float radar_names_font_size = BASE_RADAR_NAMES_FONT_SIZE;
-    float radar_bg_alpha = 0.0f;
+    float radar_list_font_size = BASE_RADAR_LIST_FONT_SIZE;
+    float radar_bg_alpha = 0.10f;
     float radar_enemy_color[4] = {1.00f, 0.30f, 0.30f, 0.90f};
     float radar_team_color[4]  = {0.30f, 0.55f, 1.00f, 0.90f};
 
@@ -182,16 +186,6 @@ struct MenuSettings {
 
     void reset() { *this = MenuSettings{}; }
 
-    void apply_radar_hud_layout(float screen_w, float screen_h) {
-        float res = screen_h / REFERENCE_HEIGHT;
-        if (res < 1.0f) res = 1.0f;
-        if (res > 1.0f) res = 1.0f;
-        (void)screen_w;
-        radar_size = 278.0f * res;
-        radar_x    = 21.0f  * res;
-        radar_y    = 21.0f  * res;
-    }
-
     void apply_legacy_color_migration() {
         auto near_rgb = [](const float c[4], float r, float g, float b) {
             return std::fabs(c[0] - r) < 0.06f &&
@@ -220,7 +214,6 @@ struct MenuSettings {
             return;
 
         float s = resolution_scale(screen_w, screen_h);
-        apply_radar_hud_layout(screen_w, screen_h);
         if (s > 1.01f)
             spec_y = BASE_SPEC_Y * s;
     }

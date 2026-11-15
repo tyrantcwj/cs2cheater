@@ -7,7 +7,6 @@
 #include "crosshair.h"
 #include "overlay.h"
 #include "config.h"
-#include "radar_hud.h"
 
 class Menu {
 public:
@@ -200,7 +199,6 @@ private:
                 g_settings.apply_startup_adapt(
                     static_cast<float>(g_overlay.width),
                     static_cast<float>(g_overlay.height));
-                g_radar_hud.force_sync(g_overlay.width, g_overlay.height);
                 g_overlay.font_rebuild_needed = true;
                 g_overlay.apply_menu_style();
                 Config::save("cs2esp.ini");
@@ -312,6 +310,13 @@ private:
                 ImGui::SliderFloat("角框比例", &g_settings.box_corner_pct, 0.1f, 0.5f, "%.2f");
             ImGui::Unindent();
         }
+        ImGui::Checkbox("名字", &g_settings.draw_name);
+        ImGui::SameLine();
+        ImGui::Checkbox("位置", &g_settings.draw_place);
+        ImGui::SameLine();
+        ImGui::Checkbox("血条", &g_settings.draw_healthbar);
+        ImGui::SameLine();
+        ImGui::Checkbox("血量", &g_settings.draw_health_text);
         ImGui::Separator();
 
         // ================================================================
@@ -370,19 +375,17 @@ private:
         ImGui::Checkbox("随视角旋转", &g_settings.radar_rotate);
         ImGui::Checkbox("距离环", &g_settings.radar_rings);
         ImGui::Checkbox("玩家名字", &g_settings.radar_names);
+        ImGui::Checkbox("地点列表", &g_settings.radar_place_list);
         if (g_settings.radar_names) {
             if (ImGui::SliderFloat("名字字体##rnf", &g_settings.radar_names_font_size, 8.0f, 20.0f, "%.0f"))
                 g_overlay.font_rebuild_needed = true;
         }
+        if (g_settings.radar_place_list)
+            ImGui::SliderFloat("列表字体##rlf", &g_settings.radar_list_font_size, 8.0f, 28.0f, "%.0f");
         end_panel();
 
         section_title("布局");
         begin_panel("##radar_layout");
-        if (ImGui::Button("对齐游戏雷达", { -1, 0 })) {
-            g_radar_hud.force_sync(g_overlay.width, g_overlay.height);
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("读取游戏 HUD 缩放，自动匹配 CS2 内置雷达大小与位置。\n仅在进图或手动按按钮时读取一次，不影响帧率。");
         ImGui::SliderFloat("大小", &g_settings.radar_size, 100, 2400, "%.0f");
         ImGui::SliderFloat("缩放", &g_settings.radar_zoom, 0.1f, 1.0f, "%.2fx");
         ImGui::SliderFloat("透明度", &g_settings.radar_bg_alpha, 0.0f, 1.0f, "%.2f");

@@ -1,10 +1,12 @@
 #pragma once
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include "types.h"
 #include "memory/memory_syscall.h"
 #include "offsets.h"
 #include "entity_utils.h"
+#include "map_place.h"
 
 inline float get_map_scale(const std::string& map_name) {
     if (map_name.find("ar_baggage") != std::string::npos) return 2.539062f;
@@ -199,7 +201,13 @@ public:
         state.local.controller = g_memory->read<uintptr_t>(
             g_memory->get_client_base() + g_offsets.client.dwLocalPlayerController);
 
-        state.local.observer_pawn = g_memory->read<uintptr_t>(state.local.controller + g_offsets.CCSPlayerController.m_hObserverPawn);
+        state.local.observer_pawn = 0;
+        if (state.local.controller && g_offsets.CCSPlayerController.m_hObserverPawn) {
+            uint32_t obs_h = g_memory->read<uint32_t>(
+                state.local.controller + g_offsets.CCSPlayerController.m_hObserverPawn);
+            if (pawn_handle_ok(obs_h))
+                state.local.observer_pawn = EntityList::resolve_handle(state.entity_list, obs_h);
+        }
 
         if (state.local.pawn) {
             // --- 1 RPM: bulk-read local pawn snapshot ---
@@ -227,8 +235,8 @@ public:
         state.local.camera = read_camera();
 
         // --- 1 RPM: entity list ptr ---
-        state.entity_list = g_memory->read<uintptr_t>(
-            g_memory->get_client_base() + g_offsets.client.dwEntityList);
+        int highest_entity = -1;
+        state.entity_list = resolve_entity_system(&highest_entity);
         if (!state.entity_list) return state;
 
         // --- 1 RPM: first page ptr ---
@@ -247,8 +255,14 @@ public:
             EntityList::ENTRY_STRIDE * 512;
         static uint8_t page_buf[PAGE_BUF_SIZE];
 
-        if (!g_memory->read_raw(first_page, page_buf, PAGE_BUF_SIZE))
-            return state;
+        if (!g_memory->read_raw(first_page, page_buf, PAGE_BUF_SIZE)) {
+            for (int slot = 0; slot < EntityList::MAX_PLAYERS; slot++) {
+                uintptr_t controller = g_memory->read<uintptr_t>(
+                    first_page + EntityList::ENTRY_STRIDE * (slot & EntityList::INDEX_MASK));
+                memcpy(page_buf + EntityList::ENTRY_STRIDE * (slot & EntityList::INDEX_MASK),
+                       &controller, sizeof(controller));
+            }
+        }
 
         for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
             uintptr_t controller;
@@ -371,30 +385,71 @@ private:
         // --- 1 RPM: bone array ptr (inside scene_node) ---
         uintptr_t bone_array = g_memory->read<uintptr_t>(
             scene_node + g_offsets.CSkeletonInstance.m_modelState + 0x80);
-        if (!bone_array) return;
-
-        // --- 1 RPM: all bones in one read ---
-        if (!g_memory->read_raw(bone_array, bone_buf, sizeof(bone_buf))) return;
+        const bool have_bones = bone_array &&
+            g_memory->read_raw(bone_array, bone_buf, sizeof(bone_buf));
 
         auto& player = state.players[i];
         player.valid = true;
         player.team = team;
         player.health = health;
         player.origin = origin;
-        player.head_world   = bone_buf[BONE_HEAD].pos;
-        player.neck_world   = bone_buf[BONE_NECK].pos;
-        player.chest_world  = bone_buf[BONE_CHEST].pos;
-        player.pelvis_world = bone_buf[BONE_PELVIS].pos;
+        if (have_bones) {
+            player.head_world   = bone_buf[BONE_HEAD].pos;
+            player.neck_world   = bone_buf[BONE_NECK].pos;
+            player.chest_world  = bone_buf[BONE_CHEST].pos;
+            player.pelvis_world = bone_buf[BONE_PELVIS].pos;
+        } else {
+            player.head_world   = { origin.x, origin.y, origin.z + 72.0f };
+            player.neck_world   = { origin.x, origin.y, origin.z + 64.0f };
+            player.chest_world  = { origin.x, origin.y, origin.z + 48.0f };
+            player.pelvis_world = { origin.x, origin.y, origin.z + 36.0f };
+        }
 
         memcpy(player.name, name, 128);
 
+        char place_raw[18]{};
+        if (g_offsets.C_CSPlayerPawn.m_szLastPlaceName)
+            g_memory->read_raw(pawn + g_offsets.C_CSPlayerPawn.m_szLastPlaceName,
+                               place_raw, sizeof(place_raw));
+        place_raw[sizeof(place_raw) - 1] = 0;
+        for (size_t n = 0; place_raw[n]; n++)
+            if ((unsigned char)place_raw[n] < 0x20) place_raw[n] = 0;
+
+        const float dx = origin.x - state.local.x;
+        const float dy = origin.y - state.local.y;
+        const float dz = origin.z - state.local.z;
+        const int meters = (int)(sqrtf(dx * dx + dy * dy + dz * dz) / 39.37f + 0.5f);
+
+        const char* zh = resolve_place_name(place_raw, state.map_name.c_str(),
+                                            origin.x, origin.y);
+        if (zh && zh[0])
+            snprintf(player.place, sizeof(player.place), "%s  %dm", zh, meters);
+        else
+            snprintf(player.place, sizeof(player.place), "%dm", meters);
+
         read_weapon(pawn, state.entity_list, player.weapon, sizeof(player.weapon), player.weapon_def_index);
 
-        for (int b = 0; b < MAX_BONE; b++)
-            player.visible[b] = w2s_depth(
-                bone_buf[b].pos, state.view_matrix,
-                screen_w, screen_h,
-                player.screens[b], player.depths[b]);
+        if (have_bones) {
+            for (int b = 0; b < MAX_BONE; b++)
+                player.visible[b] = w2s_depth(
+                    bone_buf[b].pos, state.view_matrix,
+                    screen_w, screen_h,
+                    player.screens[b], player.depths[b]);
+        } else {
+            const Vec3 stand[] = {
+                { origin.x, origin.y, origin.z + 72.0f },
+                { origin.x, origin.y, origin.z + 36.0f },
+                { origin.x, origin.y, origin.z },
+            };
+            const int ids[] = { BONE_HEAD, BONE_PELVIS, BONE_LFOOT };
+            for (int n = 0; n < 3; n++)
+                player.visible[ids[n]] = w2s_depth(
+                    stand[n], state.view_matrix, screen_w, screen_h,
+                    player.screens[ids[n]], player.depths[ids[n]]);
+            player.visible[BONE_RFOOT] = player.visible[BONE_LFOOT];
+            player.screens[BONE_RFOOT] = player.screens[BONE_LFOOT];
+            player.depths[BONE_RFOOT]  = player.depths[BONE_LFOOT];
+        }
 
 
         const bool is_spotted_ingame = g_memory->read<bool>(pawn
@@ -420,6 +475,12 @@ private:
         rp.health = health;
         rp.valid = true;
         rp.is_spotted = is_recently_spotted;
+        rp.meters = meters;
         memcpy(rp.name, name, 128);
+        rp.place[0] = 0;
+        if (zh && zh[0]) {
+            strncpy(rp.place, zh, sizeof(rp.place) - 1);
+            rp.place[sizeof(rp.place) - 1] = 0;
+        }
     }
 };

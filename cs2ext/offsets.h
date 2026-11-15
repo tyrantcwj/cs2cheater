@@ -1,4 +1,8 @@
 #pragma once
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
 #include <fstream>
 #include <string>
 #include <cstdint>
@@ -10,6 +14,7 @@
 struct Offsets {
     struct {
         uint32_t dwEntityList, dwViewMatrix, dwViewRender, dwLocalPlayerPawn, dwLocalPlayerController, dwGlobalVars;
+        uint32_t highestEntityIndex;
     } client;
     struct {
         uint32_t m_iTeamNum, m_pGameSceneNode, m_iHealth;
@@ -24,6 +29,7 @@ struct Offsets {
         uint32_t m_hPlayerPawn;
         uint32_t m_hPawn;
         uint32_t m_sSanitizedPlayerName;
+        uint32_t m_iszPlayerName;
         uint32_t m_hObserverPawn;
     } CCSPlayerController;
     struct {
@@ -33,7 +39,7 @@ struct Offsets {
         uint32_t m_hObserverTarget;
     } CPlayer_ObserverServices;
     struct {
-        uint32_t m_bIsScoped, m_entitySpottedState;
+        uint32_t m_bIsScoped, m_entitySpottedState, m_szLastPlaceName;
     } C_CSPlayerPawn;
     struct {
         uint32_t m_vecViewOffset;
@@ -58,37 +64,58 @@ struct Offsets {
     } EntitySpottedState_t;
 
     bool load(const std::string& offsets_path, const std::string& client_dll_path) {
+        // Dump against the already-attached game every launch so a patch
+        // does not wait for a failed read. A missing dumper still uses files.
+        bool dumped = false;
+        if (std::filesystem::exists("cs2-dumper.exe")) {
+            printf("[*] 正在根据当前游戏自动更新偏移...\n");
+            dumped = run_dumper();
+            if (!dumped)
+                printf("[!] 自动导出失败，尝试使用已有偏移文件\n");
+        }
+
         if (!std::filesystem::exists(offsets_path) ||
             !std::filesystem::exists(client_dll_path)) {
-            printf("[!] Offset files not found, running cs2-dumper...\n");
-            if (!run_dumper()) return false;
+            if (!dumped) {
+                printf("[!] Offset files not found, running cs2-dumper...\n");
+                if (!run_dumper()) return false;
+            }
         }
 
         if (!parse_offsets(offsets_path, client_dll_path)) {
             printf("[!] Failed to parse offsets. Running cs2-dumper...\n");
-            if (!run_dumper()) return false;
-            if (!parse_offsets(offsets_path, client_dll_path)) {
+            if (!run_dumper() || !parse_offsets(offsets_path, client_dll_path)) {
                 printf("[!] Still failed after re-dump.\n");
                 return false;
             }
         }
 
-        auto result = functional_test();
-        if (result == TestResult::OFFSETS_WRONG) {
-            printf("[!] Offsets are outdated (can't read valid game data). Running cs2-dumper...\n");
-            if (!run_dumper()) return false;
-            if (!parse_offsets(offsets_path, client_dll_path)) return false;
+        TestResult result = TestResult::NOT_READY;
+        for (int attempt = 0; attempt < 10; ++attempt) {
             result = functional_test();
-            if (result == TestResult::OFFSETS_WRONG) {
-                printf("[!] Offsets still invalid after re-dump. Game may have updated.\n");
-                return false;
+            if (result != TestResult::NOT_READY)
+                break;
+            if (attempt == 0)
+                printf("[*] 实体系统还没就绪，正在重试...\n");
+            Sleep(200);
+        }
+
+        if (result == TestResult::OFFSETS_WRONG && !dumped) {
+            printf("[!] Offsets are outdated (can't read valid game data). Running cs2-dumper...\n");
+            if (!run_dumper() || !parse_offsets(offsets_path, client_dll_path)) {
+                printf("[!] 导出偏移失败，继续使用当前偏移\n");
+            } else {
+                result = functional_test();
             }
         }
 
-        if (result == TestResult::NO_PLAYERS) {
+        if (result == TestResult::OFFSETS_WRONG) {
+            printf("[!] Offsets still invalid after dump. Game may have updated.\n");
+            printf("[*] 继续使用当前偏移\n");
+        } else if (result == TestResult::NO_PLAYERS || result == TestResult::NOT_READY) {
             printf("[*] Offsets parsed OK but no players found (you may not be in a match)\n");
             printf("[*] Proceeding — offsets will be validated when players are present\n");
-        } else {
+        } else if (result == TestResult::OK) {
             printf("[+] Offsets validated: successfully read player data\n");
         }
 
@@ -96,7 +123,7 @@ struct Offsets {
     }
 
 private:
-    enum class TestResult { OK, NO_PLAYERS, OFFSETS_WRONG };
+    enum class TestResult { OK, NO_PLAYERS, NOT_READY, OFFSETS_WRONG };
 
     bool parse_offsets(const std::string& offsets_path, const std::string& client_dll_path) {
         try {
@@ -119,6 +146,7 @@ private:
             client.dwLocalPlayerPawn = cl["dwLocalPlayerPawn"];
             client.dwLocalPlayerController = cl["dwLocalPlayerController"];
             client.dwGlobalVars = cl["dwGlobalVars"];
+            client.highestEntityIndex = cl.value("dwGameEntitySystem_highestEntityIndex", 0x2120);
 
             auto& cs = cj["client.dll"]["classes"];
             C_BaseEntity.m_iTeamNum = cs["C_BaseEntity"]["fields"]["m_iTeamNum"];
@@ -131,8 +159,12 @@ private:
                 cs["CCSPlayerController"]["fields"]["m_hPlayerPawn"];
             CCSPlayerController.m_sSanitizedPlayerName =
                 cs["CCSPlayerController"]["fields"]["m_sSanitizedPlayerName"];
+            CCSPlayerController.m_iszPlayerName =
+                cs["CBasePlayerController"]["fields"].value("m_iszPlayerName", 0x6F4);
             CCSPlayerController.m_hPawn =
                 cs["CBasePlayerController"]["fields"]["m_hPawn"];
+            CCSPlayerController.m_hObserverPawn =
+                cs["CCSPlayerController"]["fields"].value("m_hObserverPawn", 0x930);
 
             C_BasePlayerPawn.m_pObserverServices =
                 cs["C_BasePlayerPawn"]["fields"]["m_pObserverServices"];
@@ -140,6 +172,8 @@ private:
                 cs["CPlayer_ObserverServices"]["fields"]["m_hObserverTarget"];
 
             C_CSPlayerPawn.m_bIsScoped = cs["C_CSPlayerPawn"]["fields"]["m_bIsScoped"];
+            C_CSPlayerPawn.m_szLastPlaceName =
+                cs["C_CSPlayerPawn"]["fields"].value("m_szLastPlaceName", 0x14DC);
             C_BaseModelEntity.m_vecViewOffset =
                 cs["C_BaseModelEntity"]["fields"]["m_vecViewOffset"];
 
@@ -168,9 +202,29 @@ private:
             return TestResult::OFFSETS_WRONG;
         }
 
-        uintptr_t entity_list = g_memory->read<uintptr_t>(client_base + client.dwEntityList);
-        if (!entity_list) {
-            printf("[!] entity_list is null (offset 0x%X)\n", client.dwEntityList);
+        uintptr_t entity_slot = client_base + client.dwEntityList;
+        uintptr_t entity_list = g_memory->read<uintptr_t>(entity_slot);
+        const uint32_t hi_off = client.highestEntityIndex ? client.highestEntityIndex : 0x2120;
+        auto sane_hi = [](int n) { return n > 0 && n < 16384; };
+        auto system_ok = [&](uintptr_t obj) {
+            if (obj < 0x10000) return false;
+            if (!sane_hi(g_memory->read<int>(obj + hi_off))) return false;
+            return g_memory->read<uintptr_t>(obj + 16) != 0;
+        };
+        if (!system_ok(entity_list)) {
+            uintptr_t inner = entity_list ? g_memory->read<uintptr_t>(entity_list) : 0;
+            if (system_ok(inner))
+                entity_list = inner;
+            else if (system_ok(entity_slot))
+                entity_list = entity_slot;
+        }
+        if (!entity_list || !system_ok(entity_list)) {
+            // A null pointer is the entity system not being up yet (menu, loading,
+            // or the first read racing attach). That is not proof the offsets are stale.
+            if (!entity_list || entity_list < 0x10000)
+                return TestResult::NOT_READY;
+            printf("[!] entity system invalid (list 0x%llX, offset 0x%X)\n",
+                   (unsigned long long)entity_list, client.dwEntityList);
             return TestResult::OFFSETS_WRONG;
         }
 
@@ -240,10 +294,33 @@ private:
             return false;
         }
 
-        printf("[*] Running %s...\n", dumper);
-        int ret = system(dumper);
-        if (ret != 0) {
-            printf("[!] cs2-dumper failed with code %d\n", ret);
+        printf("[*] Running %s (最多等待 20 秒)...\n", dumper);
+
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        char cmd[] = "cs2-dumper.exe";
+        if (!CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            printf("[!] 无法启动 cs2-dumper (错误 %lu)\n", GetLastError());
+            return false;
+        }
+
+        const DWORD wait = WaitForSingleObject(pi.hProcess, 20000);
+        DWORD exit_code = 1;
+        if (wait == WAIT_TIMEOUT) {
+            printf("[!] cs2-dumper 超时，已结束该进程\n");
+            TerminateProcess(pi.hProcess, 1);
+        } else {
+            GetExitCodeProcess(pi.hProcess, &exit_code);
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        if (wait == WAIT_TIMEOUT || exit_code != 0) {
+            printf("[!] cs2-dumper failed with code %lu\n", exit_code);
             return false;
         }
 

@@ -149,7 +149,8 @@ public:
             return false;
         }
 
-        const size_t MAX_CHUNK = 0x10000; // 64KB per IOCTL
+        // Older mapped builds reject one large transfer. 4KB chunks still cover the entity page.
+        const size_t MAX_CHUNK = 0x1000;
         BYTE* dst = static_cast<BYTE*>(buffer);
         size_t remaining = size;
         uintptr_t current_addr = address;
