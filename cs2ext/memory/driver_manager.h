@@ -362,7 +362,8 @@ private:
     }
 
     static bool check_file_exists(const std::wstring& path) {
-        return std::filesystem::exists(path);
+        std::error_code ec;
+        return std::filesystem::exists(path, ec);
     }
 
     static std::wstring get_kdmapper_path() {
@@ -623,8 +624,8 @@ private:
     }
 
     static bool check_driver_file() {
-        std::wstring path = get_driver_path();
-        return std::filesystem::exists(path);
+        std::error_code ec;
+        return std::filesystem::exists(get_driver_path(), ec);
     }
 
     static bool check_driver_loaded() {

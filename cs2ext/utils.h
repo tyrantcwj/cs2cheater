@@ -2,6 +2,9 @@
 #include <chrono>
 #include <thread>
 #include <string>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include <windows.h>
 #include <shellapi.h>
@@ -24,6 +27,35 @@ inline void set_working_directory_to_exe() {
         SetCurrentDirectoryW(dir.c_str());
 }
 
+inline void ensure_console() {
+    if (!GetConsoleWindow())
+        AllocConsole();
+    FILE* dummy = nullptr;
+    freopen_s(&dummy, "CONOUT$", "w", stdout);
+    freopen_s(&dummy, "CONOUT$", "w", stderr);
+    freopen_s(&dummy, "CONIN$", "r", stdin);
+    SetConsoleTitleW(L"iTyc-cs2");
+    setvbuf(stdout, nullptr, _IONBF, 0);
+}
+
+// Keep the console visible on failure so double-click launches do not look like a crash.
+inline void pause_before_exit() {
+    printf("\n按回车关闭窗口...\n");
+    fflush(stdout);
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    if (!in || in == INVALID_HANDLE_VALUE) return;
+    FlushConsoleInputBuffer(in);
+    for (;;) {
+        INPUT_RECORD rec{};
+        DWORD read = 0;
+        if (!ReadConsoleInputW(in, &rec, 1, &read) || read == 0)
+            break;
+        if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown &&
+            rec.Event.KeyEvent.wVirtualKeyCode == VK_RETURN)
+            break;
+    }
+}
+
 inline bool is_running_as_admin() {
     BOOL is_admin = FALSE;
     SID_IDENTIFIER_AUTHORITY auth = SECURITY_NT_AUTHORITY;
@@ -37,14 +69,27 @@ inline bool is_running_as_admin() {
     return is_admin != FALSE;
 }
 
-inline bool relaunch_as_admin() {
+inline bool relaunch_as_admin(const wchar_t* args = nullptr) {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     const std::wstring dir = exe_directory();
-    const HINSTANCE r = ShellExecuteW(nullptr, L"runas", path, nullptr,
+    const HINSTANCE r = ShellExecuteW(nullptr, L"runas", path, args,
                                       dir.empty() ? nullptr : dir.c_str(),
                                       SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(r) > 32;
+}
+
+// Returns 1..3 when launched with --backend=N (used after UAC relaunch).
+inline int parse_backend_arg(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (!argv[i]) continue;
+        if (strncmp(argv[i], "--backend=", 10) == 0) {
+            const int backend = atoi(argv[i] + 10);
+            if (backend >= 1 && backend <= 3)
+                return backend;
+        }
+    }
+    return -1;
 }
 
 inline std::wstring utf8_to_wide(const char* text) {
