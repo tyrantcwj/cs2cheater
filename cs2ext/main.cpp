@@ -32,6 +32,8 @@
 static const char* CONFIG_PATH = "cs2esp.ini";
 static volatile bool g_running = true;
 static bool g_driver_backend_active = false;
+// After UAC handoff the parent must not overwrite the elevated child's cs2esp.ini.
+static bool g_skip_config_save = false;
 
 // Spectator background update state
 static std::atomic<bool> g_spectator_thread_running{false};
@@ -47,6 +49,8 @@ static struct SpectatorSnapshot {
 static void stop_spectator_thread();
 
 static void save_and_exit() {
+    if (g_skip_config_save)
+        return;
     Config::save(CONFIG_PATH);
     printf("[+] 配置已保存\n");
 }
@@ -228,6 +232,9 @@ int main(int argc, char** argv) {
         }
         printf("[*] 已打开管理员窗口，请查看新弹出的控制台。\n");
         printf("    本窗口按回车关闭（不是崩溃）。\n");
+        // Parent stays alive until Enter/close; do not let console_handler
+        // rewrite config with this process's stale memory_backend=3.
+        g_skip_config_save = true;
         pause_before_exit();
         CoUninitialize();
         return 0;
