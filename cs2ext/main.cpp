@@ -4,6 +4,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <stdexcept>
 #include <imgui.h>
 
 #include "aimbot.h"
@@ -31,6 +32,8 @@
 static const char* CONFIG_PATH = "cs2esp.ini";
 static volatile bool g_running = true;
 static bool g_driver_backend_active = false;
+// After UAC handoff the parent must not overwrite the elevated child's cs2esp.ini.
+static bool g_skip_config_save = false;
 
 // Spectator background update state
 static std::atomic<bool> g_spectator_thread_running{false};
@@ -46,6 +49,8 @@ static struct SpectatorSnapshot {
 static void stop_spectator_thread();
 
 static void save_and_exit() {
+    if (g_skip_config_save)
+        return;
     Config::save(CONFIG_PATH);
     printf("[+] 配置已保存\n");
 }
@@ -137,7 +142,16 @@ static void stop_spectator_thread() {
 }
 // --- end spectator updater ---
 
-int main() {
+static void reset_backend_selection() {
+    if (g_settings.memory_backend == -1)
+        return;
+    g_settings.memory_backend = -1;
+    Config::save(CONFIG_PATH);
+    printf("[*] 已清除后端选择，下次启动将重新显示菜单。\n");
+}
+
+int main(int argc, char** argv) {
+    ensure_console();
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     set_working_directory_to_exe();
@@ -158,6 +172,11 @@ int main() {
     if (g_config_loaded_from_disk = Config::load(CONFIG_PATH))
         printf("[+] 配置已加载\n");
 
+    // UAC 提权后的子进程通过 --backend=N 传入选择，避免提权前就把失败的模式 3 写进配置
+    const int cli_backend = parse_backend_arg(argc, argv);
+    if (cli_backend != -1)
+        g_settings.memory_backend = cli_backend;
+
     while (g_settings.memory_backend == -1) {
         printf("\n请选择内存读取后端：\n");
         printf("  1. 用户态 (WinAPI)               - 最简单，通用性最好\n");
@@ -166,7 +185,12 @@ int main() {
         printf("\n> ");
 
         int backend = -1;
-        scanf_s("%d", &backend);
+        if (scanf_s("%d", &backend) != 1) {
+            int ch;
+            while ((ch = getchar()) != '\n' && ch != EOF) {}
+            printf("无效输入，请输入 1/2/3。\n");
+            continue;
+        }
         if (backend < 1 || backend > 3) {
             printf("无效选项: %d\n", backend);
             continue;
@@ -182,26 +206,36 @@ int main() {
             printf("  映射后将一直驻留，直到重启电脑才会消失。\n");
             printf("\n  是否继续？(y/n): ");
             char c;
-            scanf_s(" %c", &c, 1);
+            if (scanf_s(" %c", &c, 1) != 1) {
+                printf("已取消。\n");
+                continue;
+            }
             if (c != 'y' && c != 'Y') {
                 printf("已取消。\n");
                 continue;
             }
         }
 
-
         g_settings.memory_backend = backend;
     }
 
     if (g_settings.memory_backend == KernelDriver && !is_running_as_admin()) {
         printf("[*] 模式 3 需要管理员权限，正在请求提权...\n");
-        Config::save(CONFIG_PATH);
-        if (!relaunch_as_admin()) {
+        // 不在提权前写入 backend=3：UAC 取消或子进程失败时会导致下次启动直接闪退循环
+        if (!relaunch_as_admin(L"--backend=3")) {
             printf("[-] 提权失败或用户取消了 UAC。\n");
             printf("    请右键 iTyc-cs2.exe → 以管理员身份运行，再选模式 3。\n");
+            reset_backend_selection();
+            pause_before_exit();
             CoUninitialize();
             return 1;
         }
+        printf("[*] 已打开管理员窗口，请查看新弹出的控制台。\n");
+        printf("    本窗口按回车关闭（不是崩溃）。\n");
+        // Parent stays alive until Enter/close; do not let console_handler
+        // rewrite config with this process's stale memory_backend=3.
+        g_skip_config_save = true;
+        pause_before_exit();
         CoUninitialize();
         return 0;
     }
@@ -216,25 +250,48 @@ int main() {
     }
     catch (const std::exception& e) {
         printf("[-] 创建内存后端失败: %s\n", e.what());
+        if (g_driver_backend_active)
+            reset_backend_selection();
+        pause_before_exit();
         CoUninitialize();
         return 1;
     }
 
     const std::wstring target_process = utf8_to_wide(g_settings.target_process);
-    if (!g_memory->attach(target_process.c_str())) {
-        printf("[-] 无法附加到 %s（请确认游戏已启动）。\n", g_settings.target_process);
-        printf("[*] 建议：选 1 (WinAPI) 后端，或以管理员身份运行后再试。\n");
+    bool attached = false;
+    try {
+        attached = g_memory->attach(target_process.c_str());
+    }
+    catch (const std::exception& e) {
+        printf("[-] 附加到进程时异常: %s\n", e.what());
+        attached = false;
+    }
+    catch (...) {
+        printf("[-] 附加到进程时发生未知异常。\n");
+        attached = false;
+    }
 
+    if (!attached) {
+        printf("[-] 无法附加到 %s（请确认游戏已启动）。\n", g_settings.target_process);
         if (g_driver_backend_active) {
+            printf("[*] 模式 3 失败常见原因：缺少 MemReaderKdmp.sys/kdmapper.exe、未关核心隔离、或驱动映射失败。\n");
+            printf("[*] 建议：先选 1 (WinAPI)，或以管理员身份运行并确认驱动文件齐全。\n");
             printf("[*] 正在清理驱动...\n");
             g_memory->close();
             g_memory.reset();
             g_driver_backend_active = false;
+            reset_backend_selection();
+        } else {
+            printf("[*] 建议：确认游戏已启动，或以管理员身份运行后再试。\n");
         }
 
+        pause_before_exit();
         CoUninitialize();
         return 1;
     }
+
+    // 附加成功后再持久化后端选择
+    Config::save(CONFIG_PATH);
 
     printf("[+] 已附加到 %s (进程 ID: %lu)\n", g_settings.target_process, g_memory->get_pid());
     printf("[+] client.dll 基址: 0x%llX\n",
@@ -246,6 +303,7 @@ int main() {
 
     if (!g_offsets.load("offsets/offsets.json", "offsets/client_dll.json")) {
         printf("[-] 加载偏移量失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -253,6 +311,7 @@ int main() {
 
     if (!g_overlay.init(g_memory->get_pid(), g_settings.target_window)) {
         printf("[-] 叠加层 (Overlay) 初始化失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -261,6 +320,7 @@ int main() {
     if (!g_input.initialize())
     {
         printf("[-] 输入注入模块初始化失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;

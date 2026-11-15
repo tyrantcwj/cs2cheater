@@ -1,0 +1,43 @@
+name: Windows Release Build
+
+on:
+  push:
+    branches:
+      - cursor/fix-option3-crash-e381
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: cs2ext
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (MSVC x64)
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify exe
+        shell: pwsh
+        run: |
+          $exe = "build/Release/iTyc-cs2.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          Get-Item $exe | Format-List FullName, Length, LastWriteTime
+
+      - name: Upload iTyc-cs2.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: iTyc-cs2-exe
+          path: cs2ext/build/Release/iTyc-cs2.exe
+          if-no-files-found: error
+          retention-days: 14
