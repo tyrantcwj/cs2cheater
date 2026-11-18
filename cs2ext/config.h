@@ -80,6 +80,7 @@ public:
         f << "\n[Radar]\n";
         write(f, "draw_radar", g_settings.draw_radar);
         write(f, "radar_circle", g_settings.radar_circle);
+        write(f, "radar_auto_square", g_settings.radar_auto_square);
         write(f, "radar_rotate", g_settings.radar_rotate);
         write(f, "radar_rings", g_settings.radar_rings);
         write(f, "radar_names",           g_settings.radar_names);
@@ -234,6 +235,7 @@ public:
 
         read(kv, "draw_radar", g_settings.draw_radar);
         read(kv, "radar_circle", g_settings.radar_circle);
+        read(kv, "radar_auto_square", g_settings.radar_auto_square);
         read(kv, "radar_rotate", g_settings.radar_rotate);
         read(kv, "radar_rings", g_settings.radar_rings);
         read(kv, "radar_names",           g_settings.radar_names);

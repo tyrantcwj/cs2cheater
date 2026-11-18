@@ -372,6 +372,9 @@ private:
         section_title("显示选项");
         begin_panel("##radar_opts");
         ImGui::Checkbox("圆形", &g_settings.radar_circle);
+        ImGui::Checkbox("死亡/Tab切换方形", &g_settings.radar_auto_square);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("启用后，玩家死亡或按住 Tab 时，雷达自动切换为方形全图以匹配游戏小地图。");
         ImGui::Checkbox("随视角旋转", &g_settings.radar_rotate);
         ImGui::Checkbox("距离环", &g_settings.radar_rings);
         ImGui::Checkbox("玩家名字", &g_settings.radar_names);

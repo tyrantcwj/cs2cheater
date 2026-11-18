@@ -87,6 +87,7 @@ struct MenuSettings {
     float radar_y = BASE_RADAR_POS;
     bool radar_rotate = true;
     bool radar_circle = true;
+    bool radar_auto_square = true;
     bool radar_rings = false;
     bool radar_names = false;
     bool radar_place_list = true;

@@ -401,9 +401,15 @@ int main() {
                 g_overlay.width, g_overlay.height, i, state.local.is_scoped);
         }
 
+        const bool in_match = (state.local.controller != 0 || state.local.pawn != 0);
+        const bool is_dead = in_match && !state.local.alive;
+        const bool tab_held = g_overlay.is_game_window() && (GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
+        const bool force_square = g_settings.radar_auto_square && (is_dead || tab_held);
+
         g_radar.draw(draw, state.radar_players, EntityList::MAX_PLAYERS,
             state.local.x, state.local.y, state.local.yaw, state.local.team,
-            state.map_scale, g_overlay.width, g_overlay.height);
+            state.map_scale, state.map_overview, force_square,
+            g_overlay.width, g_overlay.height);
 
         g_spectators.draw(g_overlay.width);
 

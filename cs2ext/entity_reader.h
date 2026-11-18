@@ -8,29 +8,46 @@
 #include "entity_utils.h"
 #include "map_place.h"
 
-inline float get_map_scale(const std::string& map_name) {
-    if (map_name.find("ar_baggage") != std::string::npos) return 2.539062f;
-    if (map_name.find("ar_shoots") != std::string::npos) return 2.687500f;
-    if (map_name.find("cs_italy") != std::string::npos) return 4.6f;
-    if (map_name.find("cs_office") != std::string::npos) return 4.1f;
+struct MapOverview {
+    float pos_x = 0.0f;
+    float pos_y = 0.0f;
+    float scale = 5.0f;
+    float inset_left = 0.0f;
+    float inset_top = 0.0f;
+    float inset_right = 0.0f;
+    float inset_bottom = 0.0f;
+    bool valid = false;
+};
+
+inline MapOverview get_map_overview(const std::string& map_name) {
+    if (map_name.find("ar_baggage") != std::string::npos)       return {-1316.0f, 1288.0f, 2.539062f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("ar_shoots") != std::string::npos)        return {-1368.0f, 1952.0f, 2.687500f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("cs_italy") != std::string::npos)         return {-2647.0f, 2592.0f, 4.600000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("cs_office") != std::string::npos)        return {-1838.0f, 1858.0f, 4.100000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
 
     // Check ancient before just "de_ancient" to catch v1/v2/night automatically
-    if (map_name.find("de_ancient") != std::string::npos) return 5.0f;
-    if (map_name.find("de_anubis") != std::string::npos) return 5.220000f;
+    if (map_name.find("de_ancient") != std::string::npos)       return {-2953.0f, 2164.0f, 5.000000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_anubis") != std::string::npos)        return {-2796.0f, 3328.0f, 5.220000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_cache") != std::string::npos)         return {-2000.0f, 3250.0f, 5.500000f, 0.16f, 0.04f, 0.20f, 0.04f, true};
+    if (map_name.find("de_cbble") != std::string::npos)         return {-3615.0f, 2712.0f, 4.724792f, 0.15f, 0.01f, 0.30f, 0.15f, true};
 
     // Check dust2 BEFORE dust
-    if (map_name.find("de_dust2") != std::string::npos) return 4.4f;
-    if (map_name.find("de_dust") != std::string::npos) return 6.0f;
+    if (map_name.find("de_dust2") != std::string::npos)         return {-2476.0f, 3239.0f, 4.400000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_dust") != std::string::npos)          return {-2850.0f, 4073.0f, 6.000000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
 
-    if (map_name.find("de_inferno") != std::string::npos) return 4.9f;
-    if (map_name.find("de_mirage") != std::string::npos) return 5.0f;
-    if (map_name.find("de_nuke") != std::string::npos) return 7.0f;
-    if (map_name.find("de_overpass") != std::string::npos) return 5.2f;
-    if (map_name.find("de_train") != std::string::npos) return 4.082077f;
-    if (map_name.find("de_vertigo") != std::string::npos) return 4.0f;
-    if (map_name.find("workshop_preview") != std::string::npos) return 1.699219f;
+    if (map_name.find("de_inferno") != std::string::npos)       return {-2087.0f, 3870.0f, 4.900000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_mirage") != std::string::npos)        return {-3230.0f, 1713.0f, 5.000000f, 0.135f, 0.08f, 0.105f, 0.08f, true};
+    if (map_name.find("de_nuke") != std::string::npos)          return {-3453.0f, 2887.0f, 7.000000f, 0.33f, 0.20f, 0.20f, 0.20f, true};
+    if (map_name.find("de_overpass") != std::string::npos)      return {-4831.0f, 1781.0f, 5.200000f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_train") != std::string::npos)         return {-2308.0f, 2078.0f, 4.082077f, 0.0f, 0.0f, 0.0f, 0.0f, true};
+    if (map_name.find("de_vertigo") != std::string::npos)       return {-3168.0f, 1762.0f, 4.000000f, 0.10f, 0.10f, 0.20f, 0.15f, true};
+    if (map_name.find("workshop_preview") != std::string::npos) return {-2071.0f,  711.0f, 1.699219f, 0.0f, 0.0f, 0.0f, 0.0f, true};
 
-    return 5.0f; // Default fallback if unknown map
+    return {}; // Default fallback if unknown map
+}
+
+inline float get_map_scale(const std::string& map_name) {
+    return get_map_overview(map_name).scale;
 }
 
 struct WeaponInfo {
@@ -125,6 +142,8 @@ struct LocalPlayerState {
     uintptr_t observer_pawn = 0;
     uintptr_t controller = 0;
     int team = 0;
+    int health = 0;
+    bool alive = false;
     float x = 0, y = 0, z = 0, yaw = 0;
     bool is_scoped = false;
     CameraState camera;
@@ -138,6 +157,7 @@ struct FrameState {
     uintptr_t entity_list = 0;
     std::string map_name;
     float map_scale = 5.0f;
+    MapOverview map_overview{};
 };
 
 // -----------------------------------------------------------------------
@@ -180,13 +200,15 @@ public:
             if (current_map_ptr != cached_map_ptr && current_map_ptr != 0) {
                 char map_name[64] = {0};
                 if (g_memory->read_raw(current_map_ptr, map_name, sizeof(map_name))) {
-                    cached_map_scale = get_map_scale(map_name);
+                    cached_map_overview = get_map_overview(map_name);
+                    cached_map_scale = cached_map_overview.scale;
                     cached_map_ptr = current_map_ptr;
                     cached_map_name = map_name;
                 }
             }
         }
         state.map_scale = cached_map_scale; // Assign the cached scale to the frame state
+        state.map_overview = cached_map_overview;
         state.map_name = cached_map_name;
         // ---------------------------------------------------
 
@@ -220,6 +242,8 @@ public:
             g_memory->read_raw(state.local.pawn, local_snap.buf, PawnSnapshot::SIZE);
 
             state.local.team = local_snap.get<int>(g_offsets.C_BaseEntity.m_iTeamNum);
+            state.local.health = local_snap.get<int>(g_offsets.C_BaseEntity.m_iHealth);
+            state.local.alive = (state.local.health > 0);
             state.local.is_scoped = local_snap.get<bool>(g_offsets.C_CSPlayerPawn.m_bIsScoped);
 
             uintptr_t local_scene = local_snap.get<uintptr_t>(
@@ -235,6 +259,32 @@ public:
             state.local.yaw = atan2f(state.view_matrix.m[0][1],
                                      state.view_matrix.m[0][0])
                               * 180.0f / 3.14159265f - 90.0f;
+        } else if (state.local.controller) {
+            state.local.team = g_memory->read<int>(
+                state.local.controller + g_offsets.C_BaseEntity.m_iTeamNum);
+        }
+
+        // When dead and spectating a teammate, measure place-list distance from the spectated player.
+        if (!state.local.alive && state.local.observer_pawn) {
+            uintptr_t obs_svc = g_memory->read<uintptr_t>(
+                state.local.observer_pawn + g_offsets.C_BasePlayerPawn.m_pObserverServices);
+            if (obs_svc) {
+                uint32_t obs_target_h = g_memory->read<uint32_t>(
+                    obs_svc + g_offsets.CPlayer_ObserverServices.m_hObserverTarget);
+                uintptr_t obs_target = pawn_handle_ok(obs_target_h)
+                    ? EntityList::resolve_handle(state.entity_list, obs_target_h) : 0;
+                if (obs_target) {
+                    uintptr_t obs_scene = g_memory->read<uintptr_t>(
+                        obs_target + g_offsets.C_BaseEntity.m_pGameSceneNode);
+                    if (obs_scene) {
+                        Vec3 obs_origin = g_memory->read<Vec3>(
+                            obs_scene + g_offsets.CGameSceneNode.m_vecAbsOrigin);
+                        state.local.x = obs_origin.x;
+                        state.local.y = obs_origin.y;
+                        state.local.z = obs_origin.z;
+                    }
+                }
+            }
         }
 
         state.local.camera = read_camera();
@@ -281,6 +331,7 @@ private:
     CBoneData bone_buf[MAX_BONE];
     uintptr_t cached_map_ptr = 0;
     float cached_map_scale = 5.0f;
+    MapOverview cached_map_overview{};
     std::string cached_map_name;
     std::chrono::steady_clock::time_point last_spotted_time[64];
 

@@ -7,14 +7,19 @@
 #include "types.h"
 #include "settings.h"
 #include "overlay.h"
+#include "entity_reader.h"
 
 class Radar {
 public:
     void draw(ImDrawList* draw, const RadarPlayer* players, int count,
               float local_x, float local_y, float local_yaw, int local_team,
-              float map_scale, int sw, int sh) {
+              float map_scale, const MapOverview& map_ov, bool force_square,
+              int sw, int sh) {
 
         if (!g_settings.draw_radar || !g_settings.master_switch) return;
+
+        const bool is_square = !g_settings.radar_circle || force_square;
+        const bool full_map_mode = force_square && map_ov.valid;
 
         float size = g_settings.radar_size;
 
@@ -23,6 +28,15 @@ public:
 
         float rx = g_settings.radar_x;
         float ry = g_settings.radar_y;
+
+        // Match CS2's #Radar__Round (250px) -> #Radar__Square (290px) expansion inside 300px #Radar.
+        if (g_settings.radar_circle && force_square) {
+            float expand = size * 0.08f;
+            size = size * 1.16f;
+            rx = std::max(0.0f, rx - expand);
+            ry = std::max(0.0f, ry - expand);
+        }
+
         float cx = rx + size * 0.5f;
         float cy = ry + size * 0.5f;
         float half = size * 0.5f;
@@ -30,31 +44,45 @@ public:
         ImU32 bg = IM_COL32(15, 15, 15, (int)(alpha * 255));
         ImU32 border = IM_COL32(80, 80, 80, (int)(alpha * 255));
 
-        if (g_settings.radar_circle) {
+        if (!is_square) {
             draw->AddCircleFilled({cx, cy}, half, bg, 48);
             draw->AddCircle({cx, cy}, half, border, 48, 1.5f);
         } else {
-            draw->AddRectFilled({rx, ry}, {rx + size, ry + size}, bg, 4.0f);
-            draw->AddRect({rx, ry}, {rx + size, ry + size}, border, 4.0f, 0, 1.5f);
+            float rounding = force_square ? 0.0f : 4.0f;
+            draw->AddRectFilled({rx, ry}, {rx + size, ry + size}, bg, rounding);
+            draw->AddRect({rx, ry}, {rx + size, ry + size}, border, rounding, 0, 1.5f);
         }
 
-        ImU32 cross_col = IM_COL32(255, 255, 255, (int)(alpha * 50));
-        draw->AddLine({cx - 5, cy}, {cx + 5, cy}, cross_col);
-        draw->AddLine({cx, cy - 5}, {cx, cy + 5}, cross_col);
+        if (!full_map_mode) {
+            ImU32 cross_col = IM_COL32(255, 255, 255, (int)(alpha * 50));
+            draw->AddLine({cx - 5, cy}, {cx + 5, cy}, cross_col);
+            draw->AddLine({cx, cy - 5}, {cx, cy + 5}, cross_col);
 
-        if (g_settings.radar_rings) {
-            ImU32 ring_col = IM_COL32(255, 255, 255, (int)(alpha * 25));
-            for (float f : {0.25f, 0.5f, 0.75f, 1.0f})
-                draw->AddCircle({cx, cy}, half * f, ring_col, 32, 0.5f);
+            if (g_settings.radar_rings) {
+                ImU32 ring_col = IM_COL32(255, 255, 255, (int)(alpha * 25));
+                for (float f : {0.25f, 0.5f, 0.75f, 1.0f})
+                    draw->AddCircle({cx, cy}, half * f, ring_col, 32, 0.5f);
+            }
         }
 
-        if (g_settings.radar_circle)
-            draw->PushClipRect({rx, ry}, {rx + size, ry + size}, true);
+        draw->PushClipRect({rx, ry}, {rx + size, ry + size}, true);
 
         float yaw_rad = (local_yaw + 90.0f) * 3.14159265f / 180.0f;
         float cos_y = cosf(yaw_rad);
         float sin_y = sinf(yaw_rad);
         float scale = half / range;
+
+        float ov_span = 1.0f;
+        float ov_cu = 0.5f;
+        float ov_cv = 0.5f;
+        if (full_map_mode) {
+            float span_u = 1.0f - map_ov.inset_left - map_ov.inset_right;
+            float span_v = 1.0f - map_ov.inset_top  - map_ov.inset_bottom;
+            ov_span = std::max(span_u, span_v);
+            if (ov_span <= 0.01f) ov_span = 1.0f;
+            ov_cu = map_ov.inset_left + span_u * 0.5f;
+            ov_cv = map_ov.inset_top  + span_v * 0.5f;
+        }
 
         for (int i = 0; i < count; i++) {
             if (!players[i].valid || players[i].health <= 0) continue;
@@ -66,23 +94,32 @@ public:
             float dx = players[i].x - local_x;
             float dy = players[i].y - local_y;
 
-            float rot_x, rot_y;
-            if (g_settings.radar_rotate) {
-                rot_x = dx * cos_y + dy * sin_y;
-                rot_y = -dx * sin_y + dy * cos_y;
+            float px, py;
+            if (full_map_mode) {
+                float u = (players[i].x - map_ov.pos_x) / (1024.0f * map_ov.scale);
+                float v = (map_ov.pos_y - players[i].y) / (1024.0f * map_ov.scale);
+                float sx = 0.5f + (u - ov_cu) / ov_span;
+                float sy = 0.5f + (v - ov_cv) / ov_span;
+                px = rx + sx * size;
+                py = ry + sy * size;
             } else {
-                rot_x = dx;
-                rot_y = -dy;
+                float rot_x, rot_y;
+                if (g_settings.radar_rotate) {
+                    rot_x = dx * cos_y + dy * sin_y;
+                    rot_y = -dx * sin_y + dy * cos_y;
+                } else {
+                    rot_x = dx;
+                    rot_y = -dy;
+                }
+                px = cx + rot_x * scale;
+                py = cy - rot_y * scale;
             }
-
-            float px = cx + rot_x * scale;
-            float py = cy - rot_y * scale;
 
             float off_x = px - cx, off_y = py - cy;
             float dist_sq = off_x * off_x + off_y * off_y;
             float max_r = half - 4.0f;
 
-            if (g_settings.radar_circle) {
+            if (!is_square) {
                 if (dist_sq > max_r * max_r) {
                     float d = sqrtf(dist_sq);
                     px = cx + off_x / d * max_r;
@@ -98,8 +135,11 @@ public:
                             ? float4_to_col(g_settings.radar_enemy_color)
                             : float4_to_col(g_settings.radar_team_color);
 
-            float world_dist = sqrtf(dx * dx + dy * dy);
-            float dot_r = std::clamp(5.0f - world_dist / range * 2.0f, 2.5f, 5.0f);
+            float dot_r = 4.0f;
+            if (!full_map_mode) {
+                float world_dist = sqrtf(dx * dx + dy * dy);
+                dot_r = std::clamp(5.0f - world_dist / range * 2.0f, 2.5f, 5.0f);
+            }
 
             draw->AddCircleFilled({px + 1, py + 1}, dot_r, IM_COL32(0, 0, 0, 80), 12);
             draw->AddCircleFilled({px, py}, dot_r, col, 12);
@@ -118,8 +158,7 @@ public:
             }
         }
 
-        if (g_settings.radar_circle)
-            draw->PopClipRect();
+        draw->PopClipRect();
 
         draw_place_list(draw, players, count, local_team, rx, ry, size, sh);
     }
