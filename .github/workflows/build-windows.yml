@@ -1,0 +1,62 @@
+name: Build iTyc-cs2 (Windows)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        working-directory: cs2ext
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Release
+        working-directory: cs2ext
+        run: cmake --build build --config Release --target iTyc-cs2 --parallel
+
+      - name: Stage package
+        shell: pwsh
+        run: |
+          $out = "dist/iTyc-cs2"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "cs2ext/build/Release/iTyc-cs2.exe" $out -Force
+          if (Test-Path "cs2ext/icons") {
+            Copy-Item "cs2ext/icons" "$out/icons" -Recurse -Force
+          }
+          Get-ChildItem $out -Recurse | Format-Table FullName, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iTyc-cs2-windows-x64
+          path: dist/iTyc-cs2
+          if-no-files-found: error
+
+      - name: Create zip
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/iTyc-cs2\*" -DestinationPath "iTyc-cs2-windows-x64.zip" -Force
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: iTyc-cs2 Windows build #${{ github.run_number }}
+          body: |
+            自动构建产物（含雷达下方名字/位置/血量/距离列表等当前 `main` 功能）。
+
+            下载 `iTyc-cs2-windows-x64.zip`，解压后运行 `iTyc-cs2.exe`。
+            启动时建议选模式 1 (WinAPI)。`kdmapper.exe` 不在此包内。
+          files: iTyc-cs2-windows-x64.zip
+          generate_release_notes: false
