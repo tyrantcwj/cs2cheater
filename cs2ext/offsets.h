@@ -195,6 +195,11 @@ private:
         }
     }
 
+    // x64 user space. 0xFFFFFFFFFFFFFFFF is a stale slot, not an entity list.
+    static bool is_user_ptr(uintptr_t p) {
+        return p >= 0x10000 && p <= 0x00007FFFFFFFFFFFULL;
+    }
+
     TestResult functional_test() {
         uintptr_t client_base = g_memory->get_client_base();
         if (!client_base) {
@@ -204,18 +209,24 @@ private:
 
         uintptr_t entity_slot = client_base + client.dwEntityList;
         uintptr_t entity_list = g_memory->read<uintptr_t>(entity_slot);
+        if (entity_list != 0 && !is_user_ptr(entity_list)) {
+            printf("[!] entity_list is not a user pointer (0x%llX, offset 0x%X)\n",
+                   (unsigned long long)entity_list, client.dwEntityList);
+            return TestResult::OFFSETS_WRONG;
+        }
+
         const uint32_t hi_off = client.highestEntityIndex ? client.highestEntityIndex : 0x2120;
         auto sane_hi = [](int n) { return n > 0 && n < 16384; };
         auto system_ok = [&](uintptr_t obj) {
-            if (obj < 0x10000) return false;
+            if (!is_user_ptr(obj)) return false;
             if (!sane_hi(g_memory->read<int>(obj + hi_off))) return false;
-            return g_memory->read<uintptr_t>(obj + 16) != 0;
+            return is_user_ptr(g_memory->read<uintptr_t>(obj + 16));
         };
         if (!system_ok(entity_list)) {
             uintptr_t inner = entity_list ? g_memory->read<uintptr_t>(entity_list) : 0;
             if (system_ok(inner))
                 entity_list = inner;
-            else if (system_ok(entity_slot))
+            else if (entity_list == 0 && system_ok(entity_slot))
                 entity_list = entity_slot;
         }
         if (!entity_list || !system_ok(entity_list)) {
@@ -229,8 +240,12 @@ private:
         }
 
         uintptr_t first_page = g_memory->read<uintptr_t>(entity_list + 16);
-        if (!first_page) {
-            return TestResult::NO_PLAYERS;
+        if (!is_user_ptr(first_page)) {
+            if (!first_page)
+                return TestResult::NO_PLAYERS;
+            printf("[!] entity list page is not a user pointer (0x%llX)\n",
+                   (unsigned long long)first_page);
+            return TestResult::OFFSETS_WRONG;
         }
 
         int valid_players = 0;
