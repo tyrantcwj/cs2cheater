@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <cstdio>
 #include <thread>
 #include <string>
 
@@ -37,6 +38,34 @@ inline bool is_running_as_admin() {
     return is_admin != FALSE;
 }
 
+inline void ensure_console() {
+    if (!GetConsoleWindow())
+        AllocConsole();
+    FILE* dummy = nullptr;
+    freopen_s(&dummy, "CONOUT$", "w", stdout);
+    freopen_s(&dummy, "CONOUT$", "w", stderr);
+    freopen_s(&dummy, "CONIN$", "r", stdin);
+    SetConsoleTitleW(L"iTyc-cs2");
+    setvbuf(stdout, nullptr, _IONBF, 0);
+}
+
+inline void pause_before_exit() {
+    printf("\n按回车关闭窗口...\n");
+    fflush(stdout);
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    if (!in || in == INVALID_HANDLE_VALUE) return;
+    FlushConsoleInputBuffer(in);
+    for (;;) {
+        INPUT_RECORD rec{};
+        DWORD read = 0;
+        if (!ReadConsoleInputW(in, &rec, 1, &read) || read == 0)
+            break;
+        if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown &&
+            rec.Event.KeyEvent.wVirtualKeyCode == VK_RETURN)
+            break;
+    }
+}
+
 inline bool relaunch_as_admin() {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -68,6 +97,25 @@ inline bool hwnd_belongs_to_process(HWND hwnd, DWORD pid) {
     return wpid == pid;
 }
 
+inline bool hwnd_client_size(HWND hwnd, int* out_w, int* out_h) {
+    if (!hwnd) return false;
+    RECT rc{};
+    if (!GetClientRect(hwnd, &rc)) return false;
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    if (w <= 0 || h <= 0) {
+        // Exclusive fullscreen / mode switch can briefly report a zero client.
+        // Window rect is still usable for picking the real game surface.
+        RECT wr{};
+        if (!GetWindowRect(hwnd, &wr)) return false;
+        w = wr.right - wr.left;
+        h = wr.bottom - wr.top;
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return w >= 320 && h >= 240;
+}
+
 inline FindGameWindowResult find_game_window(DWORD pid, const wchar_t* preferred_title) {
     FindGameWindowResult result{};
     result.pid = pid;
@@ -79,27 +127,31 @@ inline FindGameWindowResult find_game_window(DWORD pid, const wchar_t* preferred
             DWORD pid;
             HWND  best      = nullptr;
             int   best_area = 0;
+            HWND  sdl_best  = nullptr;
+            int   sdl_area  = 0;
         } ctx{ pid };
 
         EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
             auto* c = reinterpret_cast<EnumCtx*>(lp);
             DWORD wpid = 0;
             GetWindowThreadProcessId(hwnd, &wpid);
-            if (wpid != c->pid || !IsWindowVisible(hwnd))
+            if (wpid != c->pid)
                 return TRUE;
+            if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
+                return TRUE;
+
+            wchar_t cls[128]{};
+            GetClassNameW(hwnd, cls, 128);
+            const bool is_sdl = (cls[0] && _wcsicmp(cls, L"SDL_app") == 0);
 
             wchar_t title[256]{};
             GetWindowTextW(hwnd, title, 256);
-            if (!title[0])
+            // CS2's real surface is SDL_app; allow empty title only for that class.
+            if (!title[0] && !is_sdl)
                 return TRUE;
 
-            RECT rc{};
-            if (!GetClientRect(hwnd, &rc))
-                return TRUE;
-
-            const int w = rc.right - rc.left;
-            const int h = rc.bottom - rc.top;
-            if (w < 320 || h < 240)
+            int w = 0, h = 0;
+            if (!hwnd_client_size(hwnd, &w, &h))
                 return TRUE;
 
             const int area = w * h;
@@ -107,20 +159,27 @@ inline FindGameWindowResult find_game_window(DWORD pid, const wchar_t* preferred
                 c->best_area = area;
                 c->best      = hwnd;
             }
+            if (is_sdl && area > c->sdl_area) {
+                c->sdl_area = area;
+                c->sdl_best = hwnd;
+            }
             return TRUE;
         }, reinterpret_cast<LPARAM>(&ctx));
 
+        if (ctx.sdl_best) return ctx.sdl_best;
         return ctx.best;
     };
-
-    if (HWND hwnd = find_by_pid())
-        return { hwnd, pid };
 
     auto try_title = [&](const wchar_t* title) -> HWND {
         if (!title || !*title) return nullptr;
         HWND found = FindWindowW(nullptr, title);
         if (!found) return nullptr;
         if (pid && !hwnd_belongs_to_process(found, pid))
+            return nullptr;
+        if (!IsWindowVisible(found) || IsIconic(found))
+            return nullptr;
+        int w = 0, h = 0;
+        if (!hwnd_client_size(found, &w, &h))
             return nullptr;
         return found;
     };
@@ -133,6 +192,10 @@ inline FindGameWindowResult find_game_window(DWORD pid, const wchar_t* preferred
         L"反恐精英 2",
     };
 
+    // Prefer the live SDL surface owned by the attached process.
+    if (HWND hwnd = find_by_pid())
+        return { hwnd, pid };
+
     if (preferred_title && *preferred_title) {
         if (HWND hwnd = try_title(preferred_title))
             return { hwnd, pid };
@@ -144,9 +207,6 @@ inline FindGameWindowResult find_game_window(DWORD pid, const wchar_t* preferred
         if (HWND hwnd = try_title(title))
             return { hwnd, pid };
     }
-
-    if (HWND hwnd = find_by_pid())
-        return { hwnd, pid };
 
     return result;
 }

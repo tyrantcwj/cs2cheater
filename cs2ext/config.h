@@ -8,7 +8,7 @@
 
 class Config {
 public:
-    static constexpr int CURRENT_CONFIG_VERSION = 2;
+    static constexpr int CURRENT_CONFIG_VERSION = 6;
 
     static bool save(const std::string& path) {
         std::ofstream f(path);
@@ -30,6 +30,7 @@ public:
         write(f, "draw_healthbar", g_settings.draw_healthbar);
         write(f, "draw_health_text", g_settings.draw_health_text);
         write(f, "draw_name", g_settings.draw_name);
+        write(f, "draw_place", g_settings.draw_place);
         write(f, "draw_weapon", g_settings.draw_weapon);
         write(f, "draw_teammates", g_settings.draw_teammates);
         write(f, "draw_head", g_settings.draw_head);
@@ -82,7 +83,9 @@ public:
         write(f, "radar_rotate", g_settings.radar_rotate);
         write(f, "radar_rings", g_settings.radar_rings);
         write(f, "radar_names",           g_settings.radar_names);
+        write(f, "radar_place_list",      g_settings.radar_place_list);
         write(f, "radar_names_font_size", g_settings.radar_names_font_size);
+        write(f, "radar_list_font_size",  g_settings.radar_list_font_size);
         write(f, "radar_size", g_settings.radar_size);
         write(f, "radar_zoom", g_settings.radar_zoom);
         write(f, "radar_bg_alpha", g_settings.radar_bg_alpha);
@@ -196,6 +199,7 @@ public:
         read(kv, "draw_healthbar", g_settings.draw_healthbar);
         read(kv, "draw_health_text", g_settings.draw_health_text);
         read(kv, "draw_name", g_settings.draw_name);
+        read(kv, "draw_place", g_settings.draw_place);
         read(kv, "draw_weapon", g_settings.draw_weapon);
         read(kv, "draw_teammates", g_settings.draw_teammates);
         read(kv, "draw_head", g_settings.draw_head);
@@ -233,7 +237,9 @@ public:
         read(kv, "radar_rotate", g_settings.radar_rotate);
         read(kv, "radar_rings", g_settings.radar_rings);
         read(kv, "radar_names",           g_settings.radar_names);
+        read(kv, "radar_place_list",      g_settings.radar_place_list);
         read(kv, "radar_names_font_size", g_settings.radar_names_font_size);
+        read(kv, "radar_list_font_size",  g_settings.radar_list_font_size);
         read(kv, "radar_size", g_settings.radar_size);
         read(kv, "radar_zoom", g_settings.radar_zoom);
         read(kv, "radar_bg_alpha", g_settings.radar_bg_alpha);
@@ -297,10 +303,25 @@ public:
 
         migrate_old_keys();
 
-        g_settings.draw_healthbar   = false;
-        g_settings.draw_health_text = false;
-        g_settings.draw_name        = false;
-        g_settings.draw_weapon      = false;
+        g_settings.draw_weapon = false;
+
+        int loaded_version = 0;
+        read(kv, "config_version", loaded_version);
+        if (loaded_version < 3) {
+            g_settings.draw_name  = true;
+            g_settings.draw_place = true;
+        }
+        if (loaded_version < 4) {
+            g_settings.radar_size     = 500.0f;
+            g_settings.radar_x        = 50.0f;
+            g_settings.radar_y        = 50.0f;
+            g_settings.radar_bg_alpha = 0.10f;
+            g_settings.radar_zoom     = 0.60f;
+        }
+        if (loaded_version < 6) {
+            g_settings.draw_healthbar   = false;
+            g_settings.draw_health_text = false;
+        }
 
         return true;
     }

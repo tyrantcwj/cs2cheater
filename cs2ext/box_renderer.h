@@ -73,12 +73,15 @@ public:
         if (g_settings.draw_box)
             draw_box(d, x0, y0, x1, y1, box_thick, c, opacity);
 
-        if (g_settings.draw_healthbar)
+        if (g_settings.draw_healthbar || g_settings.draw_health_text)
             draw_healthbar(d, x0, y0, x1, y1, p.health, p.team, font,
                            g_settings.hp_font_size, opacity);
 
         if (g_settings.draw_name && p.name[0] && font)
             draw_name(d, x0, y0, x1, y1, p.name, font, avg_depth, opacity);
+
+        if (g_settings.draw_place && p.place[0] && font)
+            draw_place(d, x0, y0, x1, y1, p.place, font, opacity);
 
         if (g_settings.draw_weapon && (p.weapon[0] || p.weapon_def_index) && font)
             draw_weapon(d, x0, y0, x1, y1, p, font, avg_depth, opacity);
@@ -157,27 +160,31 @@ private:
         float hp = std::clamp(health / 100.0f, 0.0f, 1.0f);
         float filled = bh * hp;
 
-        d->AddRectFilled({bx - 1, y0 - 1}, {bx + bw + 1, y1 + 1}, apply_opacity(IM_COL32(0, 0, 0, 140), opacity));
-        d->AddRectFilled({bx, y0}, {bx + bw, y1}, apply_opacity(IM_COL32(20, 20, 20, 180), opacity));
+        if (g_settings.draw_healthbar) {
+            d->AddRectFilled({bx - 1, y0 - 1}, {bx + bw + 1, y1 + 1}, apply_opacity(IM_COL32(0, 0, 0, 140), opacity));
+            d->AddRectFilled({bx, y0}, {bx + bw, y1}, apply_opacity(IM_COL32(20, 20, 20, 180), opacity));
 
-        if (g_settings.healthbar_solid_color) {
-            ImU32 bar_col = apply_opacity(float4_to_col(g_settings.healthbar_color), opacity);
-            d->AddRectFilled({bx, y0 + (bh - filled)}, {bx + bw, y1}, bar_col);
-        } else {
-            uint8_t r = (uint8_t)(255 * (1.0f - hp));
-            uint8_t g = (uint8_t)(255 * hp);
-            d->AddRectFilled({bx, y0 + (bh - filled)}, {bx + bw, y1},
-                             apply_opacity(IM_COL32(r, g, 0, 230), opacity));
+            if (g_settings.healthbar_solid_color) {
+                ImU32 bar_col = apply_opacity(float4_to_col(g_settings.healthbar_color), opacity);
+                d->AddRectFilled({bx, y0 + (bh - filled)}, {bx + bw, y1}, bar_col);
+            } else {
+                uint8_t r = (uint8_t)(255 * (1.0f - hp));
+                uint8_t g = (uint8_t)(255 * hp);
+                d->AddRectFilled({bx, y0 + (bh - filled)}, {bx + bw, y1},
+                                 apply_opacity(IM_COL32(r, g, 0, 230), opacity));
+            }
         }
 
-        if (g_settings.draw_health_text && health < 100 && font) {
+        if (g_settings.draw_health_text && font) {
             char txt[8];
             snprintf(txt, sizeof(txt), "%d", health);
 
             ImVec2 ts = font->CalcTextSizeA(hp_font_size, FLT_MAX, 0.0f, txt);
 
-            float tx = bx - ts.x - 3;
-            float ty = y0 + (bh - filled) - ts.y * 0.5f;
+            float tx = (g_settings.draw_healthbar ? bx : x0) - ts.x - 3;
+            float ty = g_settings.draw_healthbar
+                ? y0 + (bh - filled) - ts.y * 0.5f
+                : y0;
 
             // pixel snap
             tx = floorf(tx);
@@ -245,6 +252,34 @@ private:
         d->AddText(font, name_fs, {nx, ny}, text_col, name);
     }
 
+    void draw_place(ImDrawList* d, float x0, float y0, float x1, float y1,
+                    const char* place, ImFont* font, float opacity)
+    {
+        float fs = g_settings.name_font_size * 0.92f;
+        if (fs < 9.0f) fs = 9.0f;
+
+        ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, place);
+        float nx = floorf((x0 + x1) * 0.5f - ts.x * 0.5f);
+        (void)y0;
+        float ny = y1 + 3.0f;
+
+        if (g_settings.draw_name && g_settings.name_position == 1)
+            ny += g_settings.name_font_size + 2.0f;
+
+        ny = floorf(ny);
+
+        ImU32 text_col    = apply_opacity(float4_to_col(g_settings.name_color), opacity);
+        ImU32 outline_col = apply_opacity(float4_to_col(g_settings.name_shadow_color), opacity);
+
+        if (g_settings.name_shadow) {
+            d->AddText(font, fs, {nx - 1, ny}, outline_col, place);
+            d->AddText(font, fs, {nx + 1, ny}, outline_col, place);
+            d->AddText(font, fs, {nx, ny - 1}, outline_col, place);
+            d->AddText(font, fs, {nx, ny + 1}, outline_col, place);
+        }
+        d->AddText(font, fs, {nx, ny}, text_col, place);
+    }
+
     void draw_weapon(ImDrawList* d, float x0, float y0, float x1, float y1,
                      const PlayerVisuals& p, ImFont* font, float avg_depth,
                      float opacity)
@@ -262,6 +297,8 @@ private:
     float wy = y1 + gap;
 
     if (g_settings.draw_name && g_settings.name_position == 1)
+        wy += g_settings.name_font_size + 2.0f;
+    if (g_settings.draw_place)
         wy += g_settings.name_font_size + 2.0f;
 
     float center_x = (x0 + x1) * 0.5f;

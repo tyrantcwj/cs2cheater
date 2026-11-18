@@ -67,10 +67,28 @@ public:
 
         game_pid_ = game_pid;
         const std::wstring preferred = utf8_to_wide(preferred_window_utf8);
-        const FindGameWindowResult found = find_game_window(
-            game_pid, preferred.empty() ? nullptr : preferred.c_str());
 
-        game_hwnd = found.hwnd;
+        // Game can report 0x0 while leaving loading / exclusive fullscreen.
+        // Keep probing for a few seconds instead of aborting on the first miss.
+        game_hwnd = nullptr;
+        width = height = 0;
+        for (int attempt = 0; attempt < 40; ++attempt) {
+            const FindGameWindowResult found = find_game_window(
+                game_pid, preferred.empty() ? nullptr : preferred.c_str());
+            if (found.hwnd) {
+                int w = 0, h = 0;
+                if (hwnd_client_size(found.hwnd, &w, &h)) {
+                    game_hwnd = found.hwnd;
+                    width = w;
+                    height = h;
+                    break;
+                }
+            }
+            if (attempt == 0)
+                printf("[*] 等待游戏窗口就绪...\n");
+            Sleep(250);
+        }
+
         if (!game_hwnd) {
             printf("[-] 未找到游戏窗口");
             if (preferred_window_utf8 && preferred_window_utf8[0])
@@ -81,12 +99,8 @@ public:
 
         wchar_t title[128]{};
         GetWindowTextW(game_hwnd, title, 128);
-        printf("[+] 已识别游戏窗口: %ls\n", title);
+        printf("[+] 已识别游戏窗口: %ls (%dx%d)\n", title, width, height);
 
-        RECT rc;
-        GetClientRect(game_hwnd, &rc);
-        width  = rc.right;
-        height = rc.bottom;
         if (width <= 0 || height <= 0) {
             printf("[-] 游戏窗口尺寸无效 (%dx%d)\n", width, height);
             return false;
@@ -235,35 +249,62 @@ public:
             return cfg;
         };
 
-        // ---- Menu font: single load with all UI glyphs ----
+        // ---- Menu font: CJK + merged Korean/Cyrillic fallbacks for player names ----
+        std::string kr_font, ui_font;
+        if (const char* p = find_system_font("malgun.ttf")) kr_font = p;
+        if (const char* p = find_system_font("segoeui.ttf")) ui_font = p;
         if (mf_path) {
-            auto cfg = make_cfg();
+            auto cfg = make_cfg(1, 1);
             menu_font = io.Fonts->AddFontFromFileTTF(
                 mf_path, mf_size, &cfg, get_menu_glyph_ranges(io.Fonts));
+            if (menu_font) {
+                ImFontConfig merge = make_cfg();
+                merge.MergeMode = true;
+                if (!kr_font.empty())
+                    io.Fonts->AddFontFromFileTTF(
+                        kr_font.c_str(), mf_size, &merge, io.Fonts->GetGlyphRangesKorean());
+                if (!ui_font.empty())
+                    io.Fonts->AddFontFromFileTTF(
+                        ui_font.c_str(), mf_size, &merge, io.Fonts->GetGlyphRangesCyrillic());
+            }
         }
         if (!menu_font) menu_font = io.Fonts->AddFontDefault();
         default_font    = menu_font;
         menu_title_font = menu_font;
         spec_font       = menu_font;
 
-        // ---- ESP fonts (Latin only — no full CJK atlas) ----
+        // ---- ESP fonts (Latin + Chinese names / place labels) ----
         const char* esp_path = get_esp_font_path();
         const char* esp_fb   = find_system_font("tahoma.ttf");
+        const char* cjk_path = find_system_font("msyh.ttc");
+        if (!cjk_path) cjk_path = find_system_font("msyh.ttf");
 
-        auto build_esp_font = [&](float size) -> ImFont* {
+        auto build_esp_font = [&](float size, bool with_cjk) -> ImFont* {
             size = std::roundf(std::max(size * esp_scale, 8.0f));
-            auto c = make_cfg();
+            auto c = make_cfg(1, 1);
             ImFont* f = nullptr;
             if (esp_path)
                 f = io.Fonts->AddFontFromFileTTF(esp_path, size, &c, nullptr);
             if (!f && esp_fb)
                 f = io.Fonts->AddFontFromFileTTF(esp_fb, size, &c, nullptr);
+            if (f && with_cjk && cjk_path) {
+                ImFontConfig merge = make_cfg(1, 1);
+                merge.MergeMode = true;
+                io.Fonts->AddFontFromFileTTF(
+                    cjk_path, size, &merge, get_esp_cjk_ranges(io.Fonts));
+                if (!kr_font.empty())
+                    io.Fonts->AddFontFromFileTTF(
+                        kr_font.c_str(), size, &merge, io.Fonts->GetGlyphRangesKorean());
+                if (!ui_font.empty())
+                    io.Fonts->AddFontFromFileTTF(
+                        ui_font.c_str(), size, &merge, io.Fonts->GetGlyphRangesCyrillic());
+            }
             return f;
         };
 
-        esp_font_name   = build_esp_font(g_settings.name_font_size);
-        esp_font_hp     = build_esp_font(g_settings.hp_font_size);
-        esp_font_weapon = build_esp_font(g_settings.weapon_font_size);
+        esp_font_name   = build_esp_font(g_settings.name_font_size, true);
+        esp_font_hp     = build_esp_font(g_settings.hp_font_size, false);
+        esp_font_weapon = build_esp_font(g_settings.weapon_font_size, false);
 
         esp_font = esp_font_name;
         if (!esp_font)        esp_font        = io.Fonts->AddFontDefault();
@@ -272,6 +313,7 @@ public:
 
         g_settings.esp_font_atlas_size = std::max(g_settings.name_font_size, 8.0f);
 
+        io.Fonts->TexDesiredWidth = 4096;
         io.Fonts->Build();
         ImGui_ImplDX11_CreateDeviceObjects();
         font_rebuild_needed = false;
@@ -629,7 +671,12 @@ private:
 
         bool game_visible = !IsIconic(game_hwnd);
         HWND fg           = GetForegroundWindow();
-        bool should_show  = game_visible && (fg == game_hwnd || fg == overlay_hwnd);
+        DWORD fg_pid      = 0;
+        if (fg)
+            GetWindowThreadProcessId(fg, &fg_pid);
+        bool should_show  = game_visible &&
+            (fg == game_hwnd || fg == overlay_hwnd ||
+             (game_pid_ && fg_pid == game_pid_));
 
         if (!should_show) {
             if (was_visible) {
@@ -809,28 +856,28 @@ private:
         }
     }
 
-    static const ImWchar* get_menu_glyph_ranges(ImFontAtlas* atlas) {
-        static ImVector<ImWchar> ranges;
-        if (ranges.empty()) {
-            ImFontGlyphRangesBuilder builder;
-            builder.AddRanges(atlas->GetGlyphRangesDefault());
-            builder.AddRanges(atlas->GetGlyphRangesChineseSimplifiedCommon());
-            builder.AddText(
-                "水无月真专版主页透视雷达瞄准杂项外观运行已暂停状态总开关快捷键菜单"
-                "退出程序性能后端垂直同步目标帧率内存读取切换后需重启重置所有设置"
-                "是否将恢复默认确认取消启用透视主题色使用方框名字武器血条都会从自动推导"
-                "敌人原色队友偏蓝下方单独颜色无效预设橙色亮绿蓝色洋红白红色高亮样式"
-                "填充线框发光骨骼绘制头部显示队友距离透明度衰减随淡出元素不影响观战列表"
-                "开始完全最小角框全框虚线横向纵向边距比例血条固定渐变血量文字字体阴影"
-                "顶部底部偏移武器显示图标目录无文字距离缩放默认颜色染色身体绘制宽度"
-                "头部大小深度外内重置参数透视敌人队友显示圆形随视角旋转环玩家布局"
-                "位置缩放透明度警告辅助存在封号风险请谨慎自瞄按键视野范围平滑度仅瞄头"
-                "扳机延迟毫秒打头观战者列表自动准星形状描边中心点预览主题强调边框背景"
-                "赛博橙血红电光蓝紫雾金色极简字体大小无可用对齐游戏雷达"
-                "游戏识别进程名窗口标题修改后需重启程序生效");
-            builder.BuildRanges(&ranges);
-        }
-        return ranges.Data;
+    // Full CJK, not the ~2500 "common" set. Names like 堕 / 崽 are outside
+    // that set and otherwise disappear instead of drawing a replacement.
+    static const ImWchar* cjk_glyph_ranges() {
+        static const ImWchar ranges[] = {
+            0x0020, 0x00FF,
+            0x0100, 0x024F,
+            0x2000, 0x206F,
+            0x3000, 0x30FF,
+            0x31F0, 0x31FF,
+            0x4E00, 0x9FFF,
+            0xFF00, 0xFFEF,
+            0,
+        };
+        return ranges;
+    }
+
+    static const ImWchar* get_menu_glyph_ranges(ImFontAtlas*) {
+        return cjk_glyph_ranges();
+    }
+
+    static const ImWchar* get_esp_cjk_ranges(ImFontAtlas*) {
+        return cjk_glyph_ranges();
     }
 
     static const ImWchar* get_glyph_ranges() {

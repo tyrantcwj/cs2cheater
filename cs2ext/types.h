@@ -106,6 +106,7 @@ struct PlayerVisuals {
     int health = 0;
     bool valid = false;
     char name[128]{};
+    char place[48]{};
     char weapon[64]{};
     uint16_t weapon_def_index = 0;
     Vec3 origin{};
@@ -120,9 +121,11 @@ struct RadarPlayer {
     float x, y, z;
     int team;
     int health;
+    int meters;
     bool valid;
     bool is_spotted;
     char name[128];
+    char place[32];
 };
 
 inline ImU32 float4_to_col(const float c[4]) {

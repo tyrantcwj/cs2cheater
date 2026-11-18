@@ -25,7 +25,6 @@
 #include "visible_esp.h"
 #include "spectators.h"
 #include "radar.h"
-#include "radar_hud.h"
 #include "input/input.h"
 
 static const char* CONFIG_PATH = "cs2esp.ini";
@@ -138,6 +137,7 @@ static void stop_spectator_thread() {
 // --- end spectator updater ---
 
 int main() {
+    ensure_console();
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     set_working_directory_to_exe();
@@ -199,9 +199,11 @@ int main() {
         if (!relaunch_as_admin()) {
             printf("[-] 提权失败或用户取消了 UAC。\n");
             printf("    请右键 iTyc-cs2.exe → 以管理员身份运行，再选模式 3。\n");
+            pause_before_exit();
             CoUninitialize();
             return 1;
         }
+        printf("[*] 已打开管理员窗口，请看新弹出的控制台。这个窗口可以关掉。\n");
         CoUninitialize();
         return 0;
     }
@@ -216,6 +218,7 @@ int main() {
     }
     catch (const std::exception& e) {
         printf("[-] 创建内存后端失败: %s\n", e.what());
+        pause_before_exit();
         CoUninitialize();
         return 1;
     }
@@ -232,6 +235,7 @@ int main() {
             g_driver_backend_active = false;
         }
 
+        pause_before_exit();
         CoUninitialize();
         return 1;
     }
@@ -246,6 +250,7 @@ int main() {
 
     if (!g_offsets.load("offsets/offsets.json", "offsets/client_dll.json")) {
         printf("[-] 加载偏移量失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -253,6 +258,7 @@ int main() {
 
     if (!g_overlay.init(g_memory->get_pid(), g_settings.target_window)) {
         printf("[-] 叠加层 (Overlay) 初始化失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -261,6 +267,7 @@ int main() {
     if (!g_input.initialize())
     {
         printf("[-] 输入注入模块初始化失败\n");
+        pause_before_exit();
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -379,18 +386,11 @@ int main() {
         if (state.local.observer_pawn != 0 && state.local.pawn != 0 && !state.map_name.empty() && state.map_name != "<empty>" && state.map_name != last_map_name) {
             printf( "[+] 地图切换: %s -> %s\n", last_map_name.data(), state.map_name.data());
             last_map_name = state.map_name;
-            g_radar_hud.reset_session();
             g_bvh.clear();
             printf( "[+] 正在解析地图 BVH: %s\n", last_map_name.data());
             g_bvh.parse();
             printf( "[+] BVH 解析完成\n" );
-
-            // Low-frequency radar auto-sync (only on map change)
-            g_radar_hud.try_sync_on_map_change(g_overlay.width, g_overlay.height);
         }
-
-        g_radar_hud.try_sync_first_in_match(g_overlay.width, g_overlay.height,
-                                            state.local.pawn != 0);
 
         // Spectators are now updated in a background thread (see start_spectator_thread)
 
