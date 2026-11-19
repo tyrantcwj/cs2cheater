@@ -376,6 +376,9 @@ private:
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("启用后，玩家死亡或按住 Tab 时，雷达自动切换为方形全图以匹配游戏小地图。");
         ImGui::Checkbox("随视角旋转", &g_settings.radar_rotate);
+        ImGui::Checkbox("玩家居中", &g_settings.radar_always_centered);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("对应游戏 cl_radar_always_centered。\n关闭时用全图坐标（人在图上走）；\n开启时人固定在圆心。请与游戏雷达设置保持一致。");
         ImGui::Checkbox("距离环", &g_settings.radar_rings);
         ImGui::Checkbox("玩家名字", &g_settings.radar_names);
         ImGui::Checkbox("地点列表", &g_settings.radar_place_list);

@@ -19,17 +19,19 @@ public:
         if (!g_settings.draw_radar || !g_settings.master_switch) return;
 
         const bool is_square = !g_settings.radar_circle || force_square;
-        const bool full_map_mode = force_square && map_ov.valid;
+        // Match CS2 cl_radar_always_centered:
+        //  - centered: original relative math (you stay at circle center)
+        //  - not centered / death square: absolute overview UVs (you walk on the map)
+        const bool use_overview = map_ov.valid &&
+            (force_square || !g_settings.radar_always_centered);
+        const bool centered_mode = !use_overview;
 
         float size = g_settings.radar_size;
-
-        // range = 210 * map_scale / zoom
         float range = (210.0f * map_scale) / g_settings.radar_zoom;
 
         float rx = g_settings.radar_x;
         float ry = g_settings.radar_y;
 
-        // Match CS2's #Radar__Round (250px) -> #Radar__Square (290px) expansion inside 300px #Radar.
         if (g_settings.radar_circle && force_square) {
             float expand = size * 0.08f;
             size = size * 1.16f;
@@ -53,7 +55,7 @@ public:
             draw->AddRect({rx, ry}, {rx + size, ry + size}, border, rounding, 0, 1.5f);
         }
 
-        if (!full_map_mode) {
+        if (centered_mode) {
             ImU32 cross_col = IM_COL32(255, 255, 255, (int)(alpha * 50));
             draw->AddLine({cx - 5, cy}, {cx + 5, cy}, cross_col);
             draw->AddLine({cx, cy - 5}, {cx, cy + 5}, cross_col);
@@ -67,22 +69,19 @@ public:
 
         draw->PushClipRect({rx, ry}, {rx + size, ry + size}, true);
 
+        // viewmatrix yaw already has -90; +90 restores engine yaw for centered math.
         float yaw_rad = (local_yaw + 90.0f) * 3.14159265f / 180.0f;
         float cos_y = cosf(yaw_rad);
         float sin_y = sinf(yaw_rad);
         float scale = half / range;
 
-        float ov_span = 1.0f;
-        float ov_cu = 0.5f;
-        float ov_cv = 0.5f;
-        if (full_map_mode) {
-            float span_u = 1.0f - map_ov.inset_left - map_ov.inset_right;
-            float span_v = 1.0f - map_ov.inset_top  - map_ov.inset_bottom;
-            ov_span = std::max(span_u, span_v);
-            if (ov_span <= 0.01f) ov_span = 1.0f;
-            ov_cu = map_ov.inset_left + span_u * 0.5f;
-            ov_cv = map_ov.inset_top  + span_v * 0.5f;
-        }
+        // Overview spin: identity when facing north (engine yaw 90 → ang 0).
+        // local_yaw (viewmatrix-90) facing north is 0 → ang = local_yaw.
+        const float map_ang = local_yaw * 3.14159265f / 180.0f;
+        const float cos_m = cosf(map_ang);
+        const float sin_m = sinf(map_ang);
+        const bool spin = use_overview && g_settings.radar_rotate && !force_square;
+        const float zoom = std::max(0.05f, g_settings.radar_zoom);
 
         for (int i = 0; i < count; i++) {
             if (!players[i].valid || players[i].health <= 0) continue;
@@ -95,13 +94,25 @@ public:
             float dy = players[i].y - local_y;
 
             float px, py;
-            if (full_map_mode) {
+            if (use_overview) {
                 float u = (players[i].x - map_ov.pos_x) / (1024.0f * map_ov.scale);
                 float v = (map_ov.pos_y - players[i].y) / (1024.0f * map_ov.scale);
-                float sx = 0.5f + (u - ov_cu) / ov_span;
-                float sy = 0.5f + (v - ov_cv) / ov_span;
-                px = rx + sx * size;
-                py = ry + sy * size;
+                float ox = (u - 0.5f) * size;
+                float oy = (v - 0.5f) * size;
+
+                if (spin) {
+                    float rx_ = ox * cos_m - oy * sin_m;
+                    float ry_ = ox * sin_m + oy * cos_m;
+                    ox = rx_;
+                    oy = ry_;
+                }
+                if (!force_square) {
+                    ox *= zoom;
+                    oy *= zoom;
+                }
+
+                px = cx + ox;
+                py = cy + oy;
             } else {
                 float rot_x, rot_y;
                 if (g_settings.radar_rotate) {
@@ -121,6 +132,7 @@ public:
 
             if (!is_square) {
                 if (dist_sq > max_r * max_r) {
+                    if (use_overview) continue;
                     float d = sqrtf(dist_sq);
                     px = cx + off_x / d * max_r;
                     py = cy + off_y / d * max_r;
@@ -130,13 +142,12 @@ public:
                 py = std::clamp(py, ry + 4.0f, ry + size - 4.0f);
             }
 
-            // Use independent radar colors
             ImU32 col = enemy
                             ? float4_to_col(g_settings.radar_enemy_color)
                             : float4_to_col(g_settings.radar_team_color);
 
             float dot_r = 4.0f;
-            if (!full_map_mode) {
+            if (centered_mode) {
                 float world_dist = sqrtf(dx * dx + dy * dy);
                 dot_r = std::clamp(5.0f - world_dist / range * 2.0f, 2.5f, 5.0f);
             }

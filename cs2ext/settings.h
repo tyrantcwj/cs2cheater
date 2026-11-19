@@ -5,7 +5,7 @@
 static constexpr float REFERENCE_WIDTH  = 1920.0f;
 static constexpr float REFERENCE_HEIGHT = 1080.0f;
 
-static constexpr float BASE_RADAR_SIZE            = 500.0f;
+static constexpr float BASE_RADAR_SIZE            = 498.0f;
 static constexpr float BASE_RADAR_POS             = 50.0f;
 static constexpr float BASE_RADAR_NAMES_FONT_SIZE = 11.0f;
 static constexpr float BASE_RADAR_LIST_FONT_SIZE  = 14.0f;
@@ -80,12 +80,13 @@ struct MenuSettings {
     float esp_opacity_drop_end     = 3000.0f;  // distance at which fully faded
     float esp_opacity_drop_min     = 0.1f;     // minimum alpha multiplier at max distance
 
-    // Radar (defaults are 1080p base; adapt_to_resolution() scales for 4K etc.)
+    // Radar defaults (tuned for 4K overlay alignment)
     float radar_size = BASE_RADAR_SIZE;
-    float radar_zoom = 0.60f;
+    float radar_zoom = 0.70f;
     float radar_x = BASE_RADAR_POS;
     float radar_y = BASE_RADAR_POS;
     bool radar_rotate = true;
+    bool radar_always_centered = false; // match CS2 cl_radar_always_centered
     bool radar_circle = true;
     bool radar_auto_square = true;
     bool radar_rings = false;

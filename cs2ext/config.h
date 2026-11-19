@@ -81,6 +81,7 @@ public:
         write(f, "draw_radar", g_settings.draw_radar);
         write(f, "radar_circle", g_settings.radar_circle);
         write(f, "radar_auto_square", g_settings.radar_auto_square);
+        write(f, "radar_always_centered", g_settings.radar_always_centered);
         write(f, "radar_rotate", g_settings.radar_rotate);
         write(f, "radar_rings", g_settings.radar_rings);
         write(f, "radar_names",           g_settings.radar_names);
@@ -236,6 +237,7 @@ public:
         read(kv, "draw_radar", g_settings.draw_radar);
         read(kv, "radar_circle", g_settings.radar_circle);
         read(kv, "radar_auto_square", g_settings.radar_auto_square);
+        read(kv, "radar_always_centered", g_settings.radar_always_centered);
         read(kv, "radar_rotate", g_settings.radar_rotate);
         read(kv, "radar_rings", g_settings.radar_rings);
         read(kv, "radar_names",           g_settings.radar_names);
@@ -314,11 +316,12 @@ public:
             g_settings.draw_place = true;
         }
         if (loaded_version < 4) {
-            g_settings.radar_size     = 500.0f;
+            g_settings.radar_size     = 498.0f;
             g_settings.radar_x        = 50.0f;
             g_settings.radar_y        = 50.0f;
             g_settings.radar_bg_alpha = 0.10f;
-            g_settings.radar_zoom     = 0.60f;
+            g_settings.radar_zoom     = 0.70f;
+            g_settings.radar_always_centered = false;
         }
         if (loaded_version < 6) {
             g_settings.draw_healthbar   = false;
